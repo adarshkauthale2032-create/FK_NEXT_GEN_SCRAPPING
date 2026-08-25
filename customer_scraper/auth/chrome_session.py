@@ -15,7 +15,7 @@ import re
 import shutil
 import sqlite3
 import sys
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 import urllib.request
 
 try:

@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 import sys
 import time
-from typing import List, Set
+from typing import Any, Dict, List, Optional, Set, Union
 
 # Ensure customer_scraper root is in sys.path
 BASE_DIR = Path(__file__).resolve().parent
