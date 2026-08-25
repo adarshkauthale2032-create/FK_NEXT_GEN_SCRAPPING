@@ -116,6 +116,7 @@ class APIClient:
 
                     # For 5xx server errors, retry with backoff
                     if response.status_code >= 500:
+                        print(f"\n{'='*70}\n[DEBUG 500 ERROR] Endpoint: {full_url}\n[DEBUG Status]: {response.status_code}\n[DEBUG Server Response Body]:\n{response.text[:1500]}\n{'='*70}\n")
                         retry_count += 1
                         if retry_count < MAX_REQUEST_RETRIES:
                             logger.warning(
@@ -136,7 +137,7 @@ class APIClient:
                             raise APIResponseError(
                                 f"Server error {response.status_code} on {full_url}",
                                 status_code=response.status_code,
-                                response_text=response.text[:200]
+                                response_text=response.text[:500]
                             )
 
                 except (requests.ConnectionError, requests.Timeout) as net_err:
