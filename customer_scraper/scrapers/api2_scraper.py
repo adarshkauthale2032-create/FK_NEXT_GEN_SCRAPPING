@@ -203,13 +203,6 @@ class API2Scraper:
 
         logger.info("API #2 (GraphQL) started for customer ID: %s (Requesting up to %d listings)", customer_id, LISTING_BATCH_SIZE)
 
-        # Print outgoing request details
-        print("\n" + "=" * 70)
-        print(f"[API #2 GRAPHQL REQUEST] Customer ID: {customer_id}")
-        print(f"Endpoint: {endpoint}")
-        print(f"Variables:\n{json.dumps(graphql_payload['variables'], indent=2)}")
-        print("=" * 70 + "\n")
-
         try:
             response_data = self.api_client.post(endpoint, json_data=graphql_payload, headers=api2_headers)
         except Exception as e:

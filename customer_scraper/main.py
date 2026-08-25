@@ -256,33 +256,37 @@ def main():
         for index, customer_id in enumerate(customer_ids, start=1):
             # Check if customer was already completed
             if progress_tracker.is_completed(customer_id):
-                logger.info("[%d/%d] Customer ID %s already completed. Skipping.", index, total_ids, customer_id)
+                logger.info("[Progress %d/%d] ID: %s | Status: SKIPPED (Already completed)", index, total_ids, customer_id)
                 skipped_count += 1
                 continue
-
-            logger.info("[%d/%d] Customer ID started: %s", index, total_ids, customer_id)
 
             try:
                 # Step 1: Execute API #1 (Customer & Seller Details)
                 api1_data = api1.get_seller_details(customer_id)
+                account_name = api1_data.get("account_name", "")
+                support_mgr = api1_data.get("support_manager", "No")
+                tier = api1_data.get("seller_tier", "")
 
                 # Check Support Manager Condition
-                if api1_data.get("support_manager") == "Yes":
-                    logger.info("Support Manager detected for customer %s -> Skipping API #2 and API #3.", customer_id)
-                    
-                    # Persist API #1 data to Excel
+                if support_mgr == "Yes":
                     save_success = excel_writer.append_customer(api1_data, sr_no=current_sr_no)
                     if save_success:
                         progress_tracker.mark_completed(customer_id)
                         current_sr_no += 1
                         processed_in_session += 1
-                        logger.info("Customer completed: %s", customer_id)
+                        logger.info(
+                            "[Progress %d/%d] ID: %s | Account: %s | Tier: %s | Support Manager: Yes -> SAVED (Skipped API #2/#3)",
+                            index, total_ids, customer_id, account_name, tier
+                        )
                     else:
                         logger.error("Failed to persist data to Excel for customer ID: %s", customer_id)
                     continue
 
-                # Step 2: Execute API #2 (Listings & Brand Analysis)
+                # Step 2: Execute API #2 (GraphQL Listings & Brand Analysis)
                 api2_data = api2.get_listings_and_brand(customer_id)
+                listings_cnt = api2_data.get("listing_count", 0)
+                is_brand = api2_data.get("is_brand", "")
+                brand_name = api2_data.get("brand_name", "")
 
                 # Step 3: Execute API #3 (Seller Contact Details)
                 api3_data = api3.get_seller_contacts(customer_id)
@@ -300,38 +304,41 @@ def main():
                     progress_tracker.mark_completed(customer_id)
                     current_sr_no += 1
                     processed_in_session += 1
-                    logger.info("Customer completed: %s", customer_id)
+                    brand_info = f"{is_brand} ({brand_name})" if brand_name else is_brand
+                    logger.info(
+                        "[Progress %d/%d] ID: %s | Account: %s | Tier: %s | Listings: %d | Brand: %s -> SAVED",
+                        index, total_ids, customer_id, account_name, tier, listings_cnt, brand_info
+                    )
                 else:
                     logger.error("Failed to persist data to Excel for customer ID: %s", customer_id)
 
             except AuthExpiredError as auth_err:
-                logger.critical("Authentication failure while processing %s: %s", customer_id, str(auth_err))
-                print("\n[!] Scraping paused due to authentication expiry. Please update your session cookies and restart.")
+                logger.critical("[ALERT] Authentication expired while processing %s: %s", customer_id, str(auth_err))
+                print("\n[!] Scraping paused due to authentication expiry. Please update config/session.json and restart.")
                 break
 
             except APIError as api_err:
                 failed_count += 1
-                logger.error("API error processing customer ID %s: %s. Customer skipped.", customer_id, str(api_err))
-                # Do NOT mark customer as completed so it can be retried in future runs
+                logger.warning("[WARNING] API error for customer ID %s: %s. Customer skipped.", customer_id, str(api_err))
 
             except Exception as unexp_err:
                 failed_count += 1
-                logger.error("Unexpected error processing customer ID %s: %s", customer_id, str(unexp_err), exc_info=True)
+                logger.error("[ERROR] Unexpected error for customer ID %s: %s", customer_id, str(unexp_err))
 
     except KeyboardInterrupt:
-        logger.warning("Scraper execution interrupted by user (KeyboardInterrupt). Saving state and shutting down cleanly...")
+        logger.warning("Scraper execution interrupted by user (KeyboardInterrupt). Shutting down cleanly...")
     finally:
         # Attempt final flush of any pending records
         excel_writer.flush_pending()
         
         logger.info("==========================================")
-        logger.info("Execution Summary:")
-        logger.info("  Total input IDs: %d", total_ids)
-        logger.info("  Processed in this session: %d", processed_in_session)
-        logger.info("  Previously completed / skipped: %d", skipped_count)
-        logger.info("  Failed in this session: %d", failed_count)
-        logger.info("  Total completed overall: %d", len(progress_tracker.completed_ids))
-        logger.info("END - Customer Scraping Automation")
+        logger.info("Scraping Summary:")
+        logger.info("  Total input IDs:             %d", total_ids)
+        logger.info("  Processed in this session:   %d", processed_in_session)
+        logger.info("  Skipped (already completed): %d", skipped_count)
+        logger.info("  Failed:                      %d", failed_count)
+        logger.info("  Total completed in Excel:    %d", len(progress_tracker.completed_ids))
+        logger.info("  Excel Output:                %s", OUTPUT_EXCEL_PATH)
         logger.info("==========================================")
 
 

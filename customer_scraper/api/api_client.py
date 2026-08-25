@@ -116,13 +116,13 @@ class APIClient:
 
                     # For 5xx server errors, retry with backoff
                     if response.status_code >= 500:
-                        print(f"\n{'='*70}\n[DEBUG 500 ERROR] Endpoint: {full_url}\n[DEBUG Status]: {response.status_code}\n[DEBUG Server Response Body]:\n{response.text[:1500]}\n{'='*70}\n")
                         retry_count += 1
                         if retry_count < MAX_REQUEST_RETRIES:
                             logger.warning(
-                                "Server error %d from %s. Retrying in %d seconds...",
+                                "Server error %d from %s (%s). Retrying in %d seconds...",
                                 response.status_code,
                                 full_url,
+                                response.text[:120],
                                 BACKOFF_FACTOR ** retry_count,
                             )
                             time.sleep(BACKOFF_FACTOR ** retry_count)
