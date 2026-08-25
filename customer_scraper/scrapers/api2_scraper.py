@@ -108,9 +108,24 @@ class API2Scraper:
         """
         endpoint = API2_ENDPOINT.format(customer_id=customer_id)
 
-        # Define candidates for API #2 payload:
-        # Prioritize unrestricted active listings so all 20 listings are returned
+        # Exact payload from the working browser cURL
         payload_candidates = [
+            {
+                "search_text": "",
+                "search_filters": {
+                    "internal_state": "ACTIVE"
+                },
+                "column": {
+                    "sort": {
+                        "column_name": "demand_weight",
+                        "sort_by": "DESC"
+                    }
+                },
+                "pagination": {
+                    "batch_no": 0,
+                    "batch_size": LISTING_BATCH_SIZE
+                }
+            },
             {
                 "search_text": "",
                 "search_filters": {
@@ -120,16 +135,10 @@ class API2Scraper:
             {
                 "search_text": "",
                 "search_filters": {}
-            },
-            {
-                "search_text": "",
-                "search_filters": {
-                    "potential_tag": ["MidPo"]
-                }
             }
         ]
 
-        # Ensure CSRF token and specific Referer are supplied for API #2 POST request
+        # Ensure CSRF token, seller-view-context, and specific Referer are supplied for API #2 POST request
         csrf_token = (
             self.api_client.auth_manager.headers.get("FK-CSRF-TOKEN")
             or self.api_client.auth_manager.cookies.get("XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h")
@@ -140,6 +149,7 @@ class API2Scraper:
             "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
             "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}",
             "Accept": "*/*",
+            "seller-view-context": "ALL",
         }
         if csrf_token:
             api2_headers["FK-CSRF-TOKEN"] = csrf_token
