@@ -106,14 +106,14 @@ class TestExcelWriter(unittest.TestCase):
         # Row 3 (second listing row)
         row3 = [cell.value for cell in ws[3]]
         self.assertEqual(row3[0] or "", "")  # Sr No empty on secondary rows
-        self.assertEqual(row3[1], "CUST_002")
+        self.assertEqual(row3[1] or "", "")  # Customer ID empty on secondary rows
         self.assertEqual(row3[7], "Product Title 2")
         self.assertEqual(row3[8], "BRAND_B")  # Listing Brand
 
         # Row 4 (third listing row)
         row4 = [cell.value for cell in ws[4]]
         self.assertEqual(row4[0] or "", "")
-        self.assertEqual(row4[1], "CUST_002")
+        self.assertEqual(row4[1] or "", "")  # Customer ID empty on secondary rows
         self.assertEqual(row4[7], "Product Title 3")
         self.assertEqual(row4[8], "BRAND_A")  # Listing Brand
 

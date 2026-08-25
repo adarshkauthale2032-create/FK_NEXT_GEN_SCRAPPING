@@ -217,25 +217,43 @@ class ExcelWriter:
         # If listings exist (up to 20), output one row per listing with its title and brand
         rows = []
         for idx, title in enumerate(listing_titles):
-            current_sr = sr_no if idx == 0 else ""
             brand_for_listing = listing_brands[idx] if idx < len(listing_brands) else ""
-            rows.append([
-                current_sr,
-                customer_id,
-                account_name,
-                "No",
-                seller_tier,
-                signed_up_date,
-                live_date,
-                title,
-                brand_for_listing,
-                is_brand,
-                brand_name,
-                mobile_number,
-                registered_mobile,
-                email_id,
-                registered_email,
-            ])
+            if idx == 0:
+                rows.append([
+                    sr_no,
+                    customer_id,
+                    account_name,
+                    "No",
+                    seller_tier,
+                    signed_up_date,
+                    live_date,
+                    title,
+                    brand_for_listing,
+                    is_brand,
+                    brand_name,
+                    mobile_number,
+                    registered_mobile,
+                    email_id,
+                    registered_email,
+                ])
+            else:
+                rows.append([
+                    "",  # Sr No
+                    "",  # Customer ID
+                    "",  # Account Name
+                    "",  # Support Manager
+                    "",  # Seller Tier
+                    "",  # Signed Up Date
+                    "",  # Live Date
+                    title,  # Brand List (Product Title)
+                    brand_for_listing,  # Listing Brand
+                    "",  # Is Brand
+                    "",  # Brand Name
+                    "",  # Mobile Number
+                    "",  # Registered Mobile
+                    "",  # Email ID
+                    "",  # Registered Email
+                ])
         return rows
 
     def append_customer(self, customer_data: Dict[str, Any], sr_no: Any) -> bool:
