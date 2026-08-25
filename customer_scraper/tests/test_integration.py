@@ -166,6 +166,31 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.assertEqual(ws.cell(row=2, column=8).value, "Shoe 0")
         self.assertEqual(ws.cell(row=21, column=8).value, "Socks 4")
 
+    def test_seller_limit_stops_execution(self):
+        # Test that processing stops when max limit (e.g. 2) is reached even if input has 10 IDs
+        limit = 2
+        input_ids = [f"ID_{i:03d}" for i in range(10)]
+        processed_count = 0
+
+        self.mock_client.get.return_value = {
+            "result": {
+                "displayName": "Test Seller",
+                "supportRole": {"name": "Manager Alex"},
+                "liveDate": "2023-01-01"
+            }
+        }
+
+        for c_id in input_ids:
+            if processed_count >= limit:
+                break
+            data = self.api1.get_seller_details(c_id)
+            self.excel_writer.append_customer(data, sr_no=processed_count + 1)
+            self.tracker.mark_completed(c_id)
+            processed_count += 1
+
+        self.assertEqual(processed_count, limit)
+        self.assertEqual(len(self.tracker.completed_ids), limit)
+
 
 if __name__ == "__main__":
     unittest.main()

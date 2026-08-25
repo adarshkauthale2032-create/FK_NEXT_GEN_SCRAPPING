@@ -26,6 +26,7 @@ from config.settings import (
     INPUT_SHEET_NAME,
     INPUT_COLUMN_NAME,
     LOG_FILE_PATH,
+    MAX_SELLER_LIMIT,
     OUTPUT_EXCEL_PATH,
     PROGRESS_FILE_PATH,
     SESSION_CONFIG_PATH,
@@ -295,6 +296,7 @@ def main():
     parser = argparse.ArgumentParser(description="Customer Scraping Automation")
     parser.add_argument("--import-curl", type=str, help="Import session headers and cookies from a copied cURL command")
     parser.add_argument("--set-cookie", type=str, help="Set cookie string directly")
+    parser.add_argument("--limit", type=int, default=MAX_SELLER_LIMIT, help=f"Maximum number of seller records to scrape (default: {MAX_SELLER_LIMIT})")
     args = parser.parse_args()
 
     # 1. Initialize Components
@@ -375,12 +377,20 @@ def main():
     current_sr_no = excel_writer.get_current_customer_count() + 1
 
     total_ids = len(customer_ids)
+    max_limit = args.limit if args.limit is not None else MAX_SELLER_LIMIT
     processed_in_session = 0
     skipped_count = 0
     failed_count = 0
 
+    logger.info("Total inputs available: %d | Target scrape limit: %d sellers", total_ids, max_limit)
+
     try:
         for index, customer_id in enumerate(customer_ids, start=1):
+            # Stop condition: check if we reached the seller limit
+            if processed_in_session >= max_limit:
+                logger.info("Reached target limit of %d scraped sellers. Stopping script.", max_limit)
+                break
+
             # Check if customer was already completed
             if progress_tracker.is_completed(customer_id):
                 logger.info("[Progress %d/%d] ID: %s | Status: SKIPPED (Already completed)", index, total_ids, customer_id)
@@ -402,9 +412,12 @@ def main():
                         current_sr_no += 1
                         processed_in_session += 1
                         logger.info(
-                            "[Progress %d/%d] ID: %s | Account: %s | Tier: %s | Support Manager: Yes -> SAVED (Skipped API #2/#3)",
-                            index, total_ids, customer_id, account_name, tier
+                            "[Progress %d/%d | Scraped %d/%d] ID: %s | Account: %s | Tier: %s | Support Manager: Yes -> SAVED (Skipped API #2/#3)",
+                            index, total_ids, processed_in_session, max_limit, customer_id, account_name, tier
                         )
+                        if processed_in_session >= max_limit:
+                            logger.info("Reached target limit of %d scraped sellers. Stopping script.", max_limit)
+                            break
                     else:
                         logger.error("Failed to persist data to Excel for customer ID: %s", customer_id)
                     continue
@@ -433,9 +446,12 @@ def main():
                     processed_in_session += 1
                     brand_info = f"{is_brand} ({brand_name})" if brand_name else is_brand
                     logger.info(
-                        "[Progress %d/%d] ID: %s | Account: %s | Tier: %s | Listings: %d | Brand: %s -> SAVED",
-                        index, total_ids, customer_id, account_name, tier, listings_cnt, brand_info
+                        "[Progress %d/%d | Scraped %d/%d] ID: %s | Account: %s | Tier: %s | Listings: %d | Brand: %s -> SAVED",
+                        index, total_ids, processed_in_session, max_limit, customer_id, account_name, tier, listings_cnt, brand_info
                     )
+                    if processed_in_session >= max_limit:
+                        logger.info("Reached target limit of %d scraped sellers. Stopping script.", max_limit)
+                        break
                 else:
                     logger.error("Failed to persist data to Excel for customer ID: %s", customer_id)
 
@@ -461,6 +477,7 @@ def main():
         logger.info("==========================================")
         logger.info("Scraping Summary:")
         logger.info("  Total input IDs:             %d", total_ids)
+        logger.info("  Target scrape limit:         %d", max_limit)
         logger.info("  Processed in this session:   %d", processed_in_session)
         logger.info("  Skipped (already completed): %d", skipped_count)
         logger.info("  Failed:                      %d", failed_count)
