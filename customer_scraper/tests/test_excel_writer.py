@@ -1,0 +1,156 @@
+"""
+Unit tests for ExcelWriter module and lock recovery.
+"""
+
+import json
+import os
+import shutil
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+import openpyxl
+
+from config.settings import EXCEL_COLUMNS
+from excel.excel_writer import ExcelWriter
+
+
+class TestExcelWriter(unittest.TestCase):
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.excel_path = Path(self.test_dir) / "test_scraped_data.xlsx"
+        self.pending_path = Path(self.test_dir) / "test_pending.json"
+        self.writer = ExcelWriter(
+            excel_path=self.excel_path,
+            pending_path=self.pending_path
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_workbook_initialization_and_headers(self):
+        self.assertTrue(self.excel_path.exists())
+        wb = openpyxl.load_workbook(self.excel_path)
+        ws = wb.active
+        self.assertEqual(ws.title, "Scraped Sellers")
+        
+        # Verify header row
+        headers = [cell.value for cell in ws[1]]
+        self.assertEqual(headers, EXCEL_COLUMNS)
+
+    def test_append_support_manager_yes_customer(self):
+        cust_data = {
+            "customer_id": "CUST_001",
+            "account_name": "Acme Corp",
+            "support_manager": "Yes",
+            "seller_tier": "Gold",
+            "signed_up_date": "2021-01-01",
+            "live_date": "2021-01-15",
+        }
+
+        success = self.writer.append_customer(cust_data, sr_no=1)
+        self.assertTrue(success)
+
+        wb = openpyxl.load_workbook(self.excel_path)
+        ws = wb.active
+        self.assertEqual(ws.max_row, 2)  # Header + 1 row
+
+        row_vals = [cell.value for cell in ws[2]]
+        self.assertEqual(row_vals[0], 1)  # Sr No
+        self.assertEqual(row_vals[1], "CUST_001")
+        self.assertEqual(row_vals[2], "Acme Corp")
+        self.assertEqual(row_vals[3], "Yes")
+        self.assertEqual(row_vals[4], "Gold")
+        self.assertEqual(row_vals[5], "2021-01-01")
+        self.assertEqual(row_vals[6], "2021-01-15")
+        # Ensure remaining columns are blank/empty
+        for col_idx in range(7, 14):
+            self.assertEqual(row_vals[col_idx] or "", "")
+
+    def test_append_customer_with_listings_multi_row(self):
+        cust_data = {
+            "customer_id": "CUST_002",
+            "account_name": "Retailer Plus",
+            "support_manager": "No",
+            "seller_tier": "Silver",
+            "signed_up_date": "2022-03-10",
+            "live_date": "2022-03-20",
+            "listing_titles": ["Product Title 1", "Product Title 2", "Product Title 3"],
+            "is_brand": "Possibly a Brand",
+            "brand_name": "RETAIL_BRAND",
+            "mobile_number": "9876543210",
+            "registered_mobile_number": "9876543211",
+            "email_id": "contact@retail.com",
+            "registered_email_id": "reg@retail.com",
+        }
+
+        success = self.writer.append_customer(cust_data, sr_no=2)
+        self.assertTrue(success)
+
+        wb = openpyxl.load_workbook(self.excel_path)
+        ws = wb.active
+        # Header (1) + 3 listing rows = 4 rows
+        self.assertEqual(ws.max_row, 4)
+
+        # Row 2 (first listing row)
+        row2 = [cell.value for cell in ws[2]]
+        self.assertEqual(row2[0], 2)  # Sr No on first row
+        self.assertEqual(row2[1], "CUST_002")
+        self.assertEqual(row2[7], "Product Title 1")
+        self.assertEqual(row2[8], "Possibly a Brand")
+        self.assertEqual(row2[9], "RETAIL_BRAND")
+        self.assertEqual(row2[10], "9876543210")
+
+        # Row 3 (second listing row)
+        row3 = [cell.value for cell in ws[3]]
+        self.assertEqual(row3[0] or "", "")  # Sr No empty on secondary rows
+        self.assertEqual(row3[1], "CUST_002")
+        self.assertEqual(row3[7], "Product Title 2")
+
+        # Row 4 (third listing row)
+        row4 = [cell.value for cell in ws[4]]
+        self.assertEqual(row4[0] or "", "")
+        self.assertEqual(row4[1], "CUST_002")
+        self.assertEqual(row4[7], "Product Title 3")
+
+    def test_get_completed_customer_ids(self):
+        cust1 = {"customer_id": "ID_AAA", "support_manager": "Yes"}
+        cust2 = {"customer_id": "ID_BBB", "support_manager": "No", "listing_titles": ["Item 1", "Item 2"]}
+
+        self.writer.append_customer(cust1, sr_no=1)
+        self.writer.append_customer(cust2, sr_no=2)
+
+        completed = self.writer.get_completed_customer_ids()
+        self.assertEqual(completed, {"ID_AAA", "ID_BBB"})
+        self.assertEqual(self.writer.get_current_customer_count(), 2)
+
+    def test_excel_lock_buffers_to_pending_and_recovers(self):
+        cust_data = {
+            "customer_id": "ID_LOCKED",
+            "account_name": "Locked Seller",
+            "support_manager": "Yes",
+        }
+
+        # Simulate lock on first save attempt by mocking _save_workbook_with_retry
+        with patch.object(self.writer, "_save_workbook_with_retry", return_value=False):
+            success = self.writer.append_customer(cust_data, sr_no=1)
+            self.assertFalse(success)
+
+            # Check that pending file exists and has the data
+            self.assertTrue(self.pending_path.exists())
+            pending = self.writer.load_pending_records()
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(pending[0]["data"]["customer_id"], "ID_LOCKED")
+
+        # Now simulate unlocking Excel and flushing
+        flush_success = self.writer.flush_pending()
+        self.assertTrue(flush_success)
+        self.assertFalse(self.pending_path.exists())  # pending cleared
+
+        # Verify data is now in Excel
+        completed = self.writer.get_completed_customer_ids()
+        self.assertIn("ID_LOCKED", completed)
+
+
+if __name__ == "__main__":
+    unittest.main()
