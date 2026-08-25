@@ -103,38 +103,39 @@ Example:
 
 ## 5. Authentication & Session Setup
 
-In accordance with security requirements, temporary session cookies are **not hard-coded** in the source files.
+Python `requests` runs independently from Google Chrome. To authenticate with Flipkart Seller Support:
 
-1. Copy `config/session.json.example` to `config/session.json`:
+### Option A: Import Directly from Chrome (Easiest)
+1. Open Chrome and log in to [Flipkart Seller Support](https://suv-flipkart.seller-support.fkcloud.it).
+2. Open DevTools (`F12`), go to the **Network** tab.
+3. Click any request (e.g. `getSellerDetails` or any `suv-flipkart` call).
+4. Right-click the request $\to$ **Copy** $\to$ **Copy as cURL (bash / PowerShell / cmd)**.
+5. Run:
    ```powershell
-   Copy-Item config\session.json.example config\session.json
+   python main.py --import-curl "PASTE_YOUR_CURL_HERE"
    ```
-2. Open `config/session.json` and paste your active browser session cookies and headers from Flipkart Seller Support:
-   ```json
-   {
-     "cookies": {
-       "SESSION_COOKIE_NAME": "YOUR_COOKIE_VALUE_HERE"
-     },
-     "headers": {
-       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36",
-       "Accept": "application/json, text/plain, */*"
-     }
-   }
-   ```
-3. Alternatively, you can export the cookie as an environment variable:
-   ```powershell
-   $env:FLIPKART_COOKIE="cookie1=val1; cookie2=val2"
-   ```
+   This automatically parses cookies and headers and saves them to `config/session.json`.
 
-### Session Expiry & Auto-Refresh
-* If a session expires during scraping (returns `401`, `403`, or redirects to login), `AuthManager` will pause the request, reload `config/session.json`, or prompt in the terminal to paste updated cookies.
-* After refreshing, it retries the request automatically up to `MAX_AUTH_RETRIES` (default: 2 times).
+### Option B: Set Cookie String Directly
+```powershell
+python main.py --set-cookie "SESSION_COOKIE_1=val1; SESSION_COOKIE_2=val2"
+```
+
+### Option C: Manual `config/session.json` Configuration
+Copy `config/session.json.example` to `config/session.json`:
+```powershell
+Copy-Item config\session.json.example config\session.json
+```
+And populate your cookies and headers.
+
+### Option D: Automatic Chrome Cookie Extraction (Windows)
+If Google Chrome is installed and you are logged in, `AuthManager` will automatically attempt to decrypt and load active cookies from your local Chrome profile.
 
 ---
 
 ## 6. How to Start the Scraper
 
-Run the main orchestration script:
+Ensure you are connected to the internal Flipkart Network/VPN (required for `*.fkcloud.it` endpoints):
 ```powershell
 python main.py
 ```

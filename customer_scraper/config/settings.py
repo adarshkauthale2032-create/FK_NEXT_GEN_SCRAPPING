@@ -37,7 +37,9 @@ BRAND_THRESHOLD = 12  # Must be strictly > 12 to be considered "Possibly a Brand
 LISTING_BATCH_SIZE = 20  # Fetch up to 20 listings in API #2
 
 # HTTP & Retry Settings
-REQUEST_TIMEOUT = 30  # seconds
+CONNECT_TIMEOUT = 10  # seconds to establish TCP connection
+READ_TIMEOUT = 25  # seconds to wait for server response
+REQUEST_TIMEOUT = (CONNECT_TIMEOUT, READ_TIMEOUT)  # (connect, read) tuple
 MAX_REQUEST_RETRIES = 3  # retry attempts for transient network/API errors
 BACKOFF_FACTOR = 2  # exponential backoff multiplier in seconds
 MAX_AUTH_RETRIES = 2  # retry attempts after session refresh

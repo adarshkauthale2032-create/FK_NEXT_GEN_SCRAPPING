@@ -129,15 +129,24 @@ class APIClient:
                 except (requests.ConnectionError, requests.Timeout) as net_err:
                     retry_count += 1
                     sleep_time = BACKOFF_FACTOR ** retry_count
-                    logger.warning(
-                        "Network error (%s) contacting %s. Retrying (%d/%d) in %ds...",
-                        type(net_err).__name__,
-                        full_url,
-                        retry_count,
-                        MAX_REQUEST_RETRIES,
-                        sleep_time,
-                    )
-                    time.sleep(sleep_time)
+                    if retry_count < MAX_REQUEST_RETRIES:
+                        logger.warning(
+                            "Network connection issue (%s) reaching %s. Retrying (%d/%d) in %ds...",
+                            type(net_err).__name__,
+                            full_url,
+                            retry_count,
+                            MAX_REQUEST_RETRIES,
+                            sleep_time,
+                        )
+                        time.sleep(sleep_time)
+                    else:
+                        logger.error(
+                            "Network failure contacting %s after %d retries. "
+                            "Please verify your network/VPN connection to Flipkart internal cloud.",
+                            full_url,
+                            MAX_REQUEST_RETRIES
+                        )
+                        raise APIError(f"Connection to {full_url} failed ({type(net_err).__name__}). Please check your VPN/network access.")
                 except APIError:
                     raise
                 except Exception as ex:

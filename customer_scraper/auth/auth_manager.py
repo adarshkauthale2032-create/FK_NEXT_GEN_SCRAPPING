@@ -76,6 +76,21 @@ class AuthManager:
             loaded = True
             logger.info("Session cookies loaded from environment variable FLIPKART_COOKIE")
 
+        # Fallback: Attempt automatic extraction from local Chrome profile on Windows
+        if not loaded:
+            try:
+                from auth.chrome_session import extract_cookies_from_chrome_db
+                auto_cookies = extract_cookies_from_chrome_db()
+                if auto_cookies:
+                    self.cookies.update(auto_cookies)
+                    self.session.cookies.update(auto_cookies)
+                    loaded = True
+                    logger.info("Auto-detected %d session cookies directly from Google Chrome profile!", len(auto_cookies))
+                    # Save to session.json so future runs have it cached
+                    self._save_to_file()
+            except Exception as e:
+                logger.debug("Chrome cookie auto-extraction skipped: %s", str(e))
+
         if not loaded:
             logger.warning(
                 "No session configuration found at %s. Please populate it with valid browser session credentials.",
@@ -83,6 +98,33 @@ class AuthManager:
             )
 
         return loaded
+
+    def _save_to_file(self) -> None:
+        """Saves current cookies and headers to session.json."""
+        try:
+            data = {"cookies": self.cookies, "headers": self.headers}
+            self.session_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.session_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            logger.info("Saved active session configuration to %s", self.session_path.name)
+        except Exception as e:
+            logger.error("Failed to save session configuration: %s", str(e))
+
+    def import_curl(self, curl_command: str) -> bool:
+        """Parses a cURL command and updates session headers and cookies."""
+        from auth.chrome_session import parse_curl_command
+        parsed = parse_curl_command(curl_command)
+        if parsed.get("cookies") or parsed.get("headers"):
+            if parsed.get("cookies"):
+                self.cookies.update(parsed["cookies"])
+                self.session.cookies.update(parsed["cookies"])
+            if parsed.get("headers"):
+                self.headers.update(parsed["headers"])
+                self.session.headers.update(parsed["headers"])
+            self._save_to_file()
+            logger.info("Successfully imported session from cURL command.")
+            return True
+        return False
 
     def set_cookie_string(self, cookie_string: str) -> None:
         """

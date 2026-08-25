@@ -164,12 +164,42 @@ def read_customer_ids(file_path: Path) -> List[str]:
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Customer Scraping Automation")
+    parser.add_argument("--import-curl", type=str, help="Import session headers and cookies from a copied cURL command")
+    parser.add_argument("--set-cookie", type=str, help="Set cookie string directly")
+    args = parser.parse_args()
+
+    # 1. Initialize Components
+    auth_manager = AuthManager(SESSION_CONFIG_PATH)
+
+    if args.import_curl:
+        success = auth_manager.import_curl(args.import_curl)
+        if success:
+            print(f"[+] Successfully imported session into {SESSION_CONFIG_PATH.name}")
+        else:
+            print("[-] Could not parse cookies from provided cURL string.")
+        return
+
+    if args.set_cookie:
+        auth_manager.set_cookie_string(args.set_cookie)
+        auth_manager._save_to_file()
+        print(f"[+] Cookie string saved to {SESSION_CONFIG_PATH.name}")
+        return
+
     logger.info("==========================================")
     logger.info("START - Customer Scraping Automation")
     logger.info("==========================================")
 
-    # 1. Initialize Components
-    auth_manager = AuthManager(SESSION_CONFIG_PATH)
+    if not auth_manager.cookies:
+        logger.warning("==================================================================")
+        logger.warning("NO ACTIVE COOKIES DETECTED!")
+        logger.warning("Please configure your active browser session in:")
+        logger.warning("  %s", SESSION_CONFIG_PATH)
+        logger.warning("Or copy cURL from Chrome DevTools and run:")
+        logger.warning("  python main.py --import-curl \"curl ...\"")
+        logger.warning("==================================================================")
+
     api_client = APIClient(auth_manager)
     
     api1 = API1Scraper(api_client)
