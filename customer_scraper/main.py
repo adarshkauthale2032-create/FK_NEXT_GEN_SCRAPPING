@@ -192,13 +192,34 @@ def main():
     logger.info("==========================================")
 
     if not auth_manager.cookies:
-        logger.warning("==================================================================")
-        logger.warning("NO ACTIVE COOKIES DETECTED!")
-        logger.warning("Please configure your active browser session in:")
-        logger.warning("  %s", SESSION_CONFIG_PATH)
-        logger.warning("Or copy cURL from Chrome DevTools and run:")
-        logger.warning("  python main.py --import-curl \"curl ...\"")
-        logger.warning("==================================================================")
+        print("\n" + "=" * 70)
+        print("  AUTHENTICATION REQUIRED")
+        print("=" * 70)
+        print("No active session cookies were detected.")
+        print("Please paste ANY of the following:")
+        print("  1. A copied cURL command from Chrome DevTools (Network tab)")
+        print("  2. The raw 'Cookie' header string from your browser")
+        print("=" * 70)
+
+        if sys.stdin.isatty():
+            try:
+                user_input = input("Paste cURL or Cookie here (or Press Enter to exit): ").strip()
+                if user_input:
+                    if user_input.startswith("curl") or "-H" in user_input or "--cookie" in user_input:
+                        auth_manager.import_curl(user_input)
+                    else:
+                        auth_manager.set_cookie_string(user_input)
+                        auth_manager._save_to_file()
+                    print(f"[+] Session configuration saved to {SESSION_CONFIG_PATH.name}!")
+                else:
+                    print("[-] No session provided. Please configure config/session.json and restart.")
+                    return
+            except (KeyboardInterrupt, EOFError):
+                print("\n[-] Aborted.")
+                return
+        else:
+            logger.error("No active session cookies found in %s. Please populate it and restart.", SESSION_CONFIG_PATH)
+            return
 
     api_client = APIClient(auth_manager)
     
