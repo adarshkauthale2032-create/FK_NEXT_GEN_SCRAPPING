@@ -1,9 +1,11 @@
 """
 Chrome Session & Cookie Extractor Helper.
 
-Allows automatic extraction of active cookies from Google Chrome on Windows,
-connecting to a running Chrome instance via CDP/Remote Debugging, or
-parsing raw cURL commands into session.json.
+Allows automatic extraction of active cookies and session details from Google Chrome on Windows:
+1. Direct extraction & decryption from a custom Chrome installation or User Data path.
+2. Auto-extraction from default Windows Chrome profile SQLite database.
+3. Connecting to a running Chrome instance via CDP/Remote Debugging.
+4. Parsing raw cURL commands into session.json.
 """
 
 import base64
@@ -15,7 +17,7 @@ import re
 import shutil
 import sqlite3
 import sys
-from typing import Dict, Optional
+from typing import Any, Dict, Optional, Union
 import urllib.request
 
 try:
@@ -25,22 +27,113 @@ try:
 except ImportError:
     HAS_CRYPTO = False
 
+from config.settings import BASE_URL, CHROME_INSTALLED_PATH, SESSION_CONFIG_PATH
+
 logger = logging.getLogger("customer_scraper")
 
 
-def get_chrome_user_data_path() -> Path:
-    """Returns the default Chrome User Data directory on Windows."""
+def resolve_chrome_paths(custom_path: Optional[Union[str, Path]] = None) -> Dict[str, Optional[Path]]:
+    """
+    Intelligently resolves the Chrome executable path and User Data directory
+    from a custom path, settings configuration, or default system locations.
+
+    Args:
+        custom_path: Path string or Path object pointing to:
+                     - Chrome executable (e.g. chrome.exe)
+                     - Chrome installation directory (e.g. C:\\Program Files\\Google\\Chrome\\Application)
+                     - Chrome User Data / Profile directory (e.g. AppData\\Local\\Google\\Chrome\\User Data)
+
+    Returns:
+        Dict with keys:
+            'executable': Path to chrome.exe or None
+            'user_data': Path to User Data directory or None
+    """
+    target_raw = custom_path or CHROME_INSTALLED_PATH or os.environ.get("CHROME_PATH") or os.environ.get("CHROME_USER_DATA_PATH")
+    
+    # Ignore unset placeholders
+    if isinstance(target_raw, str):
+        target_raw = target_raw.strip()
+        if not target_raw or target_raw in ("Enter_YOUR_PATH", "YOUR_PATH", "ENTER_YOUR_PATH"):
+            target_raw = None
+
+    resolved_exe: Optional[Path] = None
+    resolved_user_data: Optional[Path] = None
+
+    if target_raw:
+        candidate = Path(target_raw).expanduser().resolve()
+        
+        # 1. If candidate is directly an executable file
+        if candidate.is_file():
+            resolved_exe = candidate
+            # Check if User Data is located in parent or sibling structure
+            if (candidate.parent / "User Data").is_dir():
+                resolved_user_data = candidate.parent / "User Data"
+        
+        # 2. If candidate is a directory
+        elif candidate.is_dir():
+            # Check if it contains chrome.exe
+            if (candidate / "chrome.exe").is_file():
+                resolved_exe = candidate / "chrome.exe"
+            elif (candidate / "Application" / "chrome.exe").is_file():
+                resolved_exe = candidate / "Application" / "chrome.exe"
+
+            # Check if it is a User Data directory
+            if (candidate / "Local State").is_file() or (candidate / "Default").is_dir():
+                resolved_user_data = candidate
+            elif (candidate / "User Data").is_dir():
+                resolved_user_data = candidate / "User Data"
+
+    # Default fallback for executable if not yet found
+    if not resolved_exe:
+        program_files = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+        program_files_x86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+
+        default_exe_candidates = [
+            Path(program_files) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            Path(program_files_x86) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            Path(local_app_data) / "Google" / "Chrome" / "Application" / "chrome.exe" if local_app_data else None,
+            Path(program_files) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+            Path(program_files_x86) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+        ]
+        for c in default_exe_candidates:
+            if c and c.is_file():
+                resolved_exe = c
+                break
+
+    # Default fallback for User Data directory if not yet found
+    if not resolved_user_data:
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        if local_app_data:
+            resolved_user_data = Path(local_app_data) / "Google" / "Chrome" / "User Data"
+        else:
+            resolved_user_data = Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "User Data"
+
+    return {
+        "executable": resolved_exe,
+        "user_data": resolved_user_data,
+    }
+
+
+def get_chrome_user_data_path(custom_path: Optional[Union[str, Path]] = None) -> Path:
+    """Returns the resolved Chrome User Data directory on Windows."""
+    paths = resolve_chrome_paths(custom_path)
+    if paths.get("user_data") and paths["user_data"].exists():
+        return paths["user_data"]
+    
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     if local_app_data:
         return Path(local_app_data) / "Google" / "Chrome" / "User Data"
     return Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "User Data"
 
 
-def get_chrome_encryption_key() -> Optional[bytes]:
+def get_chrome_encryption_key(user_data_path: Optional[Path] = None) -> Optional[bytes]:
     """Retrieves and decrypts the Chrome Master Key from Local State."""
     if not HAS_CRYPTO:
         return None
-    local_state_path = get_chrome_user_data_path() / "Local State"
+    
+    base_user_data = user_data_path or get_chrome_user_data_path()
+    local_state_path = base_user_data / "Local State"
     if not local_state_path.exists():
         return None
 
@@ -53,7 +146,7 @@ def get_chrome_encryption_key() -> Optional[bytes]:
         decrypted_key = win32crypt.CryptUnprotectData(encrypted_key, None, None, None, 0)[1]
         return decrypted_key
     except Exception as e:
-        logger.debug("Could not decrypt Chrome key: %s", str(e))
+        logger.debug("Could not decrypt Chrome key from %s: %s", local_state_path, str(e))
         return None
 
 
@@ -80,19 +173,24 @@ def decrypt_chrome_cookie_value(encrypted_val: bytes, key: Optional[bytes]) -> s
     return ""
 
 
-def extract_cookies_from_chrome_db(domain_filter: str = "seller-support.fkcloud.it") -> Dict[str, str]:
+def extract_cookies_from_chrome_db(
+    custom_path: Optional[Union[str, Path]] = None,
+    domain_filter: str = "fkcloud.it",
+) -> Dict[str, str]:
     """
     Attempts to read cookies for the given domain from Chrome's SQLite database.
+    Supports a custom Chrome installation / User Data directory path.
     Copies database to a temporary location to avoid locked file errors.
     """
     cookies: Dict[str, str] = {}
-    user_data_dir = get_chrome_user_data_path()
+    user_data_dir = get_chrome_user_data_path(custom_path)
     if not user_data_dir.exists():
+        logger.debug("Chrome User Data directory does not exist at: %s", user_data_dir)
         return cookies
 
     # Check Default and Profile directories
     profile_dirs = [user_data_dir / "Default"] + list(user_data_dir.glob("Profile *"))
-    key = get_chrome_encryption_key()
+    key = get_chrome_encryption_key(user_data_dir)
 
     for p_dir in profile_dirs:
         # Chrome stores cookies in 'Network/Cookies' or 'Cookies'
@@ -107,8 +205,8 @@ def extract_cookies_from_chrome_db(domain_filter: str = "seller-support.fkcloud.
                 conn = sqlite3.connect(str(temp_copy))
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT name, encrypted_value, value, host_key FROM cookies WHERE host_key LIKE ?",
-                    (f"%{domain_filter}%",)
+                    "SELECT name, encrypted_value, value, host_key FROM cookies WHERE host_key LIKE ? OR host_key LIKE ?",
+                    (f"%{domain_filter}%", "%flipkart%")
                 )
                 for name, enc_val, plain_val, host in cursor.fetchall():
                     val = plain_val
@@ -129,22 +227,87 @@ def extract_cookies_from_chrome_db(domain_filter: str = "seller-support.fkcloud.
     return cookies
 
 
-def extract_cookies_from_running_chrome_cdp(port: int = 9222, target_url: str = "seller-support.fkcloud.it") -> Dict[str, str]:
+def extract_full_session_from_chrome(
+    custom_path: Optional[Union[str, Path]] = None,
+    save_to_file: bool = True,
+) -> Optional[Dict[str, Any]]:
     """
-    Connects to an already running Chrome started with remote debugging port:
-    chrome.exe --remote-debugging-port=9222
+    Extracts session cookies and generates matching headers directly from the
+    specified Chrome path (or default installation/profile).
+    
+    If cookies are found and save_to_file is True, updates config/session.json.
+
+    Returns:
+        Dict with 'cookies' and 'headers' if successful, or None.
     """
-    cookies = {}
-    try:
-        json_url = f"http://127.0.0.1:{port}/json"
-        req = urllib.request.Request(json_url, headers={"User-Agent": "CustomerScraper"})
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            tabs = json.loads(resp.read().decode("utf-8"))
-            logger.info("Found %d open tabs in running Chrome instance.", len(tabs))
-    except Exception:
-        # Chrome is not running in remote debugging mode
-        return cookies
-    return cookies
+    resolved = resolve_chrome_paths(custom_path)
+    logger.info("Resolving Chrome paths (Exe: %s, UserData: %s)...", resolved.get("executable"), resolved.get("user_data"))
+
+    # 1. Attempt direct SQLite database decryption from Chrome User Data
+    cookies = extract_cookies_from_chrome_db(custom_path=custom_path)
+    
+    # 2. If SQLite was locked or empty, attempt CDP/Playwright extraction if browser is running
+    if not cookies or "connect.sid" not in cookies:
+        try:
+            from auth.playwright_session import PlaywrightSessionHandler
+            playwright_handler = PlaywrightSessionHandler(
+                profile_dir=resolved.get("user_data"),
+                base_url=BASE_URL,
+            )
+            if playwright_handler.is_browser_open():
+                cdp_session = playwright_handler.extract_session_from_opened_browser()
+                if cdp_session and cdp_session.get("cookies"):
+                    cookies.update(cdp_session["cookies"])
+        except Exception as e:
+            logger.debug("CDP session fallback check: %s", str(e))
+
+    if not cookies:
+        logger.warning("No Flipkart seller cookies were found at the specified Chrome path.")
+        return None
+
+    # Determine CSRF Token from cookies if present
+    csrf_token = cookies.get("XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h", "")
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive",
+        "Content-Type": "application/json",
+        "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
+        "Referer": "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html",
+        "operation": "query",
+        "operation-name": "GetListingRows",
+        "x-internal-env-type": "WEB",
+        "x-marketplace-context": "ALL",
+        "x-requested-with": "XMLHttpRequest",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "sec-ch-ua": "\"Not=A?Brand\";v=\"99\", \"Google Chrome\";v=\"151\", \"Chromium\";v=\"151\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Windows\"",
+    }
+
+    if csrf_token:
+        headers["FK-CSRF-TOKEN"] = csrf_token
+        headers["fk-csrf-token"] = csrf_token
+
+    session_payload = {
+        "cookies": cookies,
+        "headers": headers,
+    }
+
+    if save_to_file:
+        try:
+            SESSION_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(SESSION_CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(session_payload, f, indent=4)
+            logger.info("Successfully saved %d extracted cookies to %s", len(cookies), SESSION_CONFIG_PATH.name)
+        except Exception as e:
+            logger.error("Failed to save extracted session to %s: %s", SESSION_CONFIG_PATH, str(e))
+
+    return session_payload
 
 
 def parse_curl_command(curl_text: str) -> Dict[str, Any]:

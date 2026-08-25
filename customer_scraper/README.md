@@ -111,29 +111,41 @@ Example:
 
 ---
 
-## 5. Authentication & Opened Browser Session Management
+## 5. Authentication & Chrome Session Extraction
 
+The scraper provides multiple seamless ways to load and manage your Flipkart Seller Support session:
+
+### Option A: Automatic Extraction from Custom Chrome Path
+If your Google Chrome is installed in a custom location, or if you want to extract session details directly from your Chrome profile:
+1. Open [`config/settings.py`](file:///c:/Users/Adarsh%20Kauthale/Documents/FK%20Next-Gen%20FlipKart%20Scrapping/customer_scraper/config/settings.py) and locate:
+   ```python
+   CHROME_INSTALLED_PATH = "Enter_YOUR_PATH"
+   ```
+2. Replace `"Enter_YOUR_PATH"` with your actual Chrome path. Supported path formats:
+   * **Chrome executable path:** `r"C:\Program Files\Google\Chrome\Application\chrome.exe"`
+   * **Chrome install directory:** `r"C:\Program Files\Google\Chrome\Application"`
+   * **Chrome User Data / Profile directory:** `r"C:\Users\<Username>\AppData\Local\Google\Chrome\User Data"`
+3. The scraper will automatically extract your active cookies, decrypt them, format the GraphQL/CSRF headers, and update [`config/session.json`](file:///c:/Users/Adarsh%20Kauthale/Documents/FK%20Next-Gen%20FlipKart%20Scrapping/customer_scraper/config/session.json).
+4. You can also trigger extraction on-demand from the command line:
+   ```powershell
+   python main.py --extract-chrome
+   # or supply the path directly:
+   python main.py --chrome-path "C:\Program Files\Google\Chrome\Application\chrome.exe"
+   ```
+
+### Option B: Opened Browser Session Management (Playwright / CDP)
 The scraper connects directly to an **opened browser** using Playwright / Chrome DevTools Protocol (CDP) and **keeps the browser window open** throughout execution:
-
-### How It Works:
-
 1. **Direct Connection to Opened Browser:**
    - When `python main.py` runs, it checks for an already-opened browser on port `9222` (or launches one with the persistent `browser_profile/` directory).
    - The browser window **remains open and will NOT be closed**.
-
 2. **First Run / Manual Login:**
    - The browser opens with the Flipkart Seller Support portal.
    - You log in manually in that open browser window (SSO, OTP, Captcha).
    - Press `[ENTER]` in the terminal.
    - The scraper extracts active cookies and CSRF tokens directly from the open browser without closing it, and starts scraping immediately.
-
 3. **Subsequent Runs:**
    - Keep your browser open in the background!
    - When you run `python main.py` again, the scraper immediately grabs the active session from your open browser in real-time. No new windows are spawned and no login is required.
-
-4. **When Session Expires:**
-   - If the website session expires, simply refresh/log in inside your already-open browser window and press `[ENTER]`.
-   - The scraper reads the refreshed session from the open browser and continues seamlessly.
 
 ---
 

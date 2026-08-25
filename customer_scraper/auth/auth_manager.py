@@ -97,7 +97,24 @@ class AuthManager:
                 loaded = True
                 logger.info("Session cookies loaded from environment variable FLIPKART_COOKIE")
 
-        # 3. Fallback: Attempt extraction directly from opened browser
+        # 3. Fallback: Attempt extraction directly from custom/installed Chrome path or DB
+        if not loaded:
+            try:
+                from auth.chrome_session import extract_full_session_from_chrome
+                chrome_session = extract_full_session_from_chrome(save_to_file=False)
+                if chrome_session and chrome_session.get("cookies"):
+                    self.cookies.update(chrome_session["cookies"])
+                    self.session.cookies.update(chrome_session["cookies"])
+                    if chrome_session.get("headers"):
+                        self.headers.update(chrome_session["headers"])
+                        self.session.headers.update(chrome_session["headers"])
+                    loaded = True
+                    logger.info("Loaded %d session cookies directly from Chrome installation/profile.", len(chrome_session["cookies"]))
+                    self._save_to_file()
+            except Exception as e:
+                logger.debug("Chrome custom path auto-extraction notice: %s", str(e))
+
+        # 4. Fallback: Attempt extraction directly from opened CDP browser
         if not loaded:
             try:
                 auto_cookies = self.playwright_handler.extract_existing_profile_cookies()
@@ -111,6 +128,22 @@ class AuthManager:
                 logger.debug("Opened browser cookie extraction notice: %s", str(e))
 
         return loaded
+
+    def extract_session_from_custom_chrome(self, custom_path: Optional[str] = None) -> bool:
+        """
+        Explicitly triggers extraction from the specified Chrome installation or profile path.
+        """
+        from auth.chrome_session import extract_full_session_from_chrome
+        session_data = extract_full_session_from_chrome(custom_path=custom_path, save_to_file=True)
+        if session_data and session_data.get("cookies"):
+            self.cookies.update(session_data["cookies"])
+            self.session.cookies.update(session_data["cookies"])
+            if session_data.get("headers"):
+                self.headers.update(session_data["headers"])
+                self.session.headers.update(session_data["headers"])
+            logger.info("Successfully extracted session from Chrome (%s).", custom_path or "default")
+            return True
+        return False
 
     def login_with_playwright(self, force_login_prompt: bool = False) -> bool:
         """

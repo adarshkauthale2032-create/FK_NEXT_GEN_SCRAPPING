@@ -167,12 +167,23 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Customer Scraping Automation")
     parser.add_argument("--login", action="store_true", help="Launch Playwright persistent browser window for manual login")
+    parser.add_argument("--extract-chrome", action="store_true", help="Extract session directly from installed Chrome profile/path")
+    parser.add_argument("--chrome-path", type=str, help="Specify custom Chrome installation or User Data path")
     parser.add_argument("--import-curl", type=str, help="Import session headers and cookies from a copied cURL command")
     parser.add_argument("--set-cookie", type=str, help="Set cookie string directly")
     args = parser.parse_args()
 
     # 1. Initialize Components
     auth_manager = AuthManager(SESSION_CONFIG_PATH)
+
+    if args.chrome_path or args.extract_chrome:
+        target_path = args.chrome_path or None
+        success = auth_manager.extract_session_from_custom_chrome(target_path)
+        if success:
+            print(f"[+] Successfully extracted {len(auth_manager.cookies)} session cookies from Chrome into {SESSION_CONFIG_PATH.name}")
+        else:
+            print("[-] Could not extract active cookies from specified Chrome path.")
+        return
 
     if args.login:
         logger.info("Manual login requested via --login flag.")

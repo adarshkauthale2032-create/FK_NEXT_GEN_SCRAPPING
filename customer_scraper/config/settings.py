@@ -21,6 +21,14 @@ LOG_FILE_PATH = LOGS_DIR / "scraper.log"
 SESSION_CONFIG_PATH = CONFIG_DIR / "session.json"
 BROWSER_PROFILE_DIR = BASE_DIR / "browser_profile"
 
+# Custom Chrome / Browser Path Configuration
+# If your Chrome is installed in a custom location, replace "Enter_YOUR_PATH" with your actual path.
+# Supported formats:
+#   1. Chrome executable: r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+#   2. Chrome installation folder: r"C:\Program Files\Google\Chrome\Application"
+#   3. Chrome User Data / Profile folder: r"C:\Users\<YourUser>\AppData\Local\Google\Chrome\User Data"
+CHROME_INSTALLED_PATH = "Enter_YOUR_PATH"
+
 # Ensure runtime directories exist
 INPUT_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

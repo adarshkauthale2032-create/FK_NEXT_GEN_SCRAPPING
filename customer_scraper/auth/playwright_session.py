@@ -34,11 +34,17 @@ def is_browser_running_on_cdp(cdp_url: str = CDP_URL) -> bool:
         return False
 
 
-def find_browser_executable() -> Optional[str]:
+def find_browser_executable(custom_path: Optional[Union[str, Path]] = None) -> Optional[str]:
     """
-    Finds the Chrome or Chromium executable on the Windows system.
+    Finds the Chrome or Chromium executable on the Windows system, checking
+    custom settings, environment variables, or standard locations.
     """
-    # 1. Check common Google Chrome paths on Windows
+    from auth.chrome_session import resolve_chrome_paths
+    resolved = resolve_chrome_paths(custom_path)
+    if resolved.get("executable") and resolved["executable"].is_file():
+        return str(resolved["executable"])
+
+    # Fallback check common Google Chrome paths on Windows
     program_files = os.environ.get("PROGRAMFILES", r"C:\Program Files")
     program_files_x86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
     local_app_data = os.environ.get("LOCALAPPDATA", "")
@@ -46,13 +52,13 @@ def find_browser_executable() -> Optional[str]:
     potential_paths = [
         Path(program_files) / "Google" / "Chrome" / "Application" / "chrome.exe",
         Path(program_files_x86) / "Google" / "Chrome" / "Application" / "chrome.exe",
-        Path(local_app_data) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path(local_app_data) / "Google" / "Chrome" / "Application" / "chrome.exe" if local_app_data else None,
         Path(program_files) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
         Path(program_files_x86) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
     ]
 
     for p in potential_paths:
-        if p.exists():
+        if p and p.exists():
             return str(p)
 
     return None
@@ -69,7 +75,9 @@ class PlaywrightSessionHandler:
         profile_dir: Optional[Path] = None,
         base_url: Optional[str] = None,
         cdp_port: int = CDP_PORT,
+        custom_chrome_path: Optional[Union[str, Path]] = None,
     ):
+        self.custom_chrome_path = custom_chrome_path
         self.profile_dir = Path(profile_dir or BROWSER_PROFILE_DIR)
         self.base_url = base_url or BASE_URL
         self.cdp_port = cdp_port
@@ -160,7 +168,7 @@ class PlaywrightSessionHandler:
             logger.info("Browser is already running on port %d.", self.cdp_port)
             return
 
-        browser_exe = find_browser_executable()
+        browser_exe = find_browser_executable(self.custom_chrome_path)
         if not browser_exe:
             # Fallback to python playwright CLI or default
             browser_exe = "chrome"
