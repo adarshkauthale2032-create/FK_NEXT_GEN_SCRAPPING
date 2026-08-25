@@ -19,11 +19,13 @@ PROGRESS_FILE_PATH = OUTPUT_DIR / "progress.json"
 PENDING_FILE_PATH = OUTPUT_DIR / "pending_results.json"
 LOG_FILE_PATH = LOGS_DIR / "scraper.log"
 SESSION_CONFIG_PATH = CONFIG_DIR / "session.json"
+BROWSER_PROFILE_DIR = BASE_DIR / "browser_profile"
 
 # Ensure runtime directories exist
 INPUT_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
+BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
 # API Configuration
 BASE_URL = "https://suv-flipkart.seller-support.fkcloud.it"

@@ -2,6 +2,7 @@
 Authentication package for customer scraper.
 """
 
-from .auth_manager import AuthManager
+from .auth_manager import AuthManager, AuthExpiredError
+from .playwright_session import PlaywrightSessionHandler
 
-__all__ = ["AuthManager"]
+__all__ = ["AuthManager", "AuthExpiredError", "PlaywrightSessionHandler"]

@@ -10,12 +10,16 @@ A production-ready, modular, and resilient Python automation system to extract s
 customer_scraper/
 │
 ├── main.py                     # CLI entry point & sequential orchestrator
-├── requirements.txt            # Python dependencies (requests, openpyxl)
+├── requirements.txt            # Python dependencies (requests, openpyxl, playwright)
 ├── README.md                   # Comprehensive documentation & guide
 │
 ├── auth/                       # Authentication & session layer
 │   ├── __init__.py
-│   └── auth_manager.py         # Cookie management, auth verification & token refresh
+│   ├── auth_manager.py         # Cookie management, auth verification & token refresh
+│   ├── playwright_session.py   # Playwright Persistent Context browser session launcher
+│   └── chrome_session.py       # Legacy helper utilities
+│
+├── browser_profile/            # Dedicated Playwright Persistent Browser Profile
 │
 ├── api/                        # Shared network layer
 │   ├── __init__.py
@@ -57,6 +61,7 @@ customer_scraper/
   * `requests>=2.31.0` (HTTP networking)
   * `openpyxl>=3.1.2` (Excel generation & styling)
   * `urllib3>=2.0.0` (Connection pooling)
+  * `playwright>=1.40.0` (Persistent browser profile & session automation)
 
 ---
 
@@ -82,6 +87,11 @@ customer_scraper/
    pip install -r requirements.txt
    ```
 
+5. Install Playwright browser binaries (one-time setup):
+   ```powershell
+   playwright install chromium
+   ```
+
 ---
 
 ## 4. Input Configuration
@@ -101,41 +111,36 @@ Example:
 
 ---
 
-## 5. Authentication & Session Setup
+## 5. Authentication & Playwright Persistent Context
 
-Python `requests` runs independently from Google Chrome. To authenticate with Flipkart Seller Support:
+The scraper uses **Playwright Persistent Context** (`browser_type.launch_persistent_context`) with a dedicated profile directory (`browser_profile/`).
 
-### Option A: Import Directly from Chrome (Easiest)
-1. Open Chrome and log in to [Flipkart Seller Support](https://suv-flipkart.seller-support.fkcloud.it).
-2. Open DevTools (`F12`), go to the **Network** tab.
-3. Click any request (e.g. `getSellerDetails` or any `suv-flipkart` call).
-4. Right-click the request $\to$ **Copy** $\to$ **Copy as cURL (bash / PowerShell / cmd)**.
-5. Run:
-   ```powershell
-   python main.py --import-curl "PASTE_YOUR_CURL_HERE"
-   ```
-   This automatically parses cookies and headers and saves them to `config/session.json`.
+### How It Works:
 
-### Option B: Set Cookie String Directly
-```powershell
-python main.py --set-cookie "SESSION_COOKIE_1=val1; SESSION_COOKIE_2=val2"
-```
+1. **First Run / Fresh Session:**
+   - Run `python main.py` (or `python main.py --login`).
+   - If no active session exists, Playwright automatically launches Chromium with the persistent profile `browser_profile/`.
+   - Log in manually to Flipkart Seller Support in the opened browser window (complete SSO, OTP, or Captcha).
+   - Return to your terminal and press `[ENTER]`.
+   - Playwright captures all session cookies, local storage, indexedDB, and CSRF tokens into `browser_profile/` and `config/session.json`.
+   - The scraper immediately begins processing customer IDs.
 
-### Option C: Manual `config/session.json` Configuration
-Copy `config/session.json.example` to `config/session.json`:
-```powershell
-Copy-Item config\session.json.example config\session.json
-```
-And populate your cookies and headers.
+2. **Subsequent Runs:**
+   - Run `python main.py`.
+   - The scraper automatically reuses the existing persistent browser session without opening the browser or asking for login.
 
-### Option D: Automatic Chrome Cookie Extraction (Windows)
-If Google Chrome is installed and you are logged in, `AuthManager` will automatically attempt to decrypt and load active cookies from your local Chrome profile.
+3. **Session Expiry & Auto-Refresh:**
+   - If the Flipkart session expires during scraping (401/403/Redirect to SSO):
+   - The scraper automatically pauses and re-opens the Playwright persistent browser window.
+   - You log in manually once again in the browser.
+   - The updated session is persisted into `browser_profile/` and `config/session.json`.
+   - Scraping resumes immediately from the exact customer ID without losing progress.
 
 ---
 
 ## 6. How to Start the Scraper
 
-Ensure you are connected to the internal Flipkart Network/VPN (required for `*.fkcloud.it` endpoints):
+Ensure you are connected to the internal Flipkart Network/VPN:
 ```powershell
 python main.py
 ```

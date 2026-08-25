@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import requests
 
-from config.settings import SESSION_CONFIG_PATH
+from config.settings import BASE_URL, BROWSER_PROFILE_DIR, SESSION_CONFIG_PATH
+from auth.playwright_session import PlaywrightSessionHandler
 
 logger = logging.getLogger("customer_scraper")
 
@@ -25,10 +26,16 @@ class AuthExpiredError(Exception):
 
 class AuthManager:
     """
-    Handles authentication state, cookies, headers, and session lifecycles.
+    Handles authentication state, cookies, headers, and session lifecycles
+    using Playwright Persistent Context and requests.Session.
     """
 
-    def __init__(self, session_path: Optional[Path] = None):
+    def __init__(
+        self,
+        session_path: Optional[Path] = None,
+        profile_dir: Optional[Path] = None,
+        base_url: Optional[str] = None,
+    ):
         self.session_path = session_path or SESSION_CONFIG_PATH
         self.session = requests.Session()
         self.cookies: Dict[str, str] = {}
@@ -41,15 +48,20 @@ class AuthManager:
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "en-US,en;q=0.9",
         }
+        self.playwright_handler = PlaywrightSessionHandler(
+            profile_dir=profile_dir or BROWSER_PROFILE_DIR,
+            base_url=base_url or BASE_URL,
+        )
         self.load_session()
 
     def load_session(self) -> bool:
         """
-        Loads cookies and headers from the configuration file or environment.
+        Loads cookies and headers from the session configuration file,
+        environment variables, or Playwright persistent browser profile.
         """
         loaded = False
 
-        # Try loading from session JSON file
+        # 1. Try loading from cached session JSON file
         if self.session_path.exists():
             try:
                 with open(self.session_path, "r", encoding="utf-8") as f:
@@ -57,53 +69,78 @@ class AuthManager:
                     file_cookies = data.get("cookies", {})
                     file_headers = data.get("headers", {})
 
-                    if file_cookies:
+                    if file_cookies and isinstance(file_cookies, dict) and len(file_cookies) > 0:
                         self.cookies.update(file_cookies)
                         self.session.cookies.update(file_cookies)
-                    if file_headers:
+                        loaded = True
+
+                    if file_headers and isinstance(file_headers, dict):
                         self.headers.update(file_headers)
                         self.session.headers.update(file_headers)
 
-                    # Automatically ensure FK-CSRF-TOKEN header is set if present in cookies
+                    # Ensure FK-CSRF-TOKEN header is set if present in cookies
                     if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies and "FK-CSRF-TOKEN" not in self.headers:
                         csrf_val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
                         self.headers["FK-CSRF-TOKEN"] = csrf_val
                         self.session.headers["FK-CSRF-TOKEN"] = csrf_val
 
-                    loaded = True
-                    logger.info("Session configuration successfully loaded from %s", self.session_path.name)
+                    if loaded:
+                        logger.info("Session configuration successfully loaded from %s", self.session_path.name)
             except Exception as e:
-                logger.error("Failed to read session file (%s): %s", self.session_path, str(e))
+                logger.debug("Failed to read session file (%s): %s", self.session_path, str(e))
 
-        # Check environment variables as fallback
-        env_cookie = os.environ.get("FLIPKART_COOKIE")
-        if env_cookie:
-            self.set_cookie_string(env_cookie)
-            loaded = True
-            logger.info("Session cookies loaded from environment variable FLIPKART_COOKIE")
+        # 2. Check environment variables as fallback
+        if not loaded:
+            env_cookie = os.environ.get("FLIPKART_COOKIE")
+            if env_cookie:
+                self.set_cookie_string(env_cookie)
+                loaded = True
+                logger.info("Session cookies loaded from environment variable FLIPKART_COOKIE")
 
-        # Fallback: Attempt automatic extraction from local Chrome profile on Windows
+        # 3. Fallback: Attempt silent extraction from existing Playwright persistent profile
         if not loaded:
             try:
-                from auth.chrome_session import extract_cookies_from_chrome_db
-                auto_cookies = extract_cookies_from_chrome_db()
+                auto_cookies = self.playwright_handler.extract_existing_profile_cookies()
                 if auto_cookies:
                     self.cookies.update(auto_cookies)
                     self.session.cookies.update(auto_cookies)
                     loaded = True
-                    logger.info("Auto-detected %d session cookies directly from Google Chrome profile!", len(auto_cookies))
-                    # Save to session.json so future runs have it cached
+                    logger.info("Loaded %d session cookies from persistent browser profile.", len(auto_cookies))
                     self._save_to_file()
             except Exception as e:
-                logger.debug("Chrome cookie auto-extraction skipped: %s", str(e))
-
-        if not loaded:
-            logger.warning(
-                "No session configuration found at %s. Please populate it with valid browser session credentials.",
-                self.session_path
-            )
+                logger.debug("Persistent profile cookie extraction notice: %s", str(e))
 
         return loaded
+
+    def login_with_playwright(self) -> bool:
+        """
+        Launches the Playwright persistent browser context for user login,
+        captures session cookies and headers, and persists them.
+        """
+        logger.info("Starting Playwright persistent browser login session...")
+        try:
+            session_data = self.playwright_handler.launch_login_session()
+            new_cookies = session_data.get("cookies", {})
+            new_headers = session_data.get("headers", {})
+
+            if new_cookies:
+                self.cookies.update(new_cookies)
+                self.session.cookies.update(new_cookies)
+
+            if new_headers:
+                self.headers.update(new_headers)
+                self.session.headers.update(new_headers)
+
+            if self.cookies:
+                self._save_to_file()
+                logger.info("Playwright session successfully authenticated and persisted.")
+                return True
+            else:
+                logger.warning("No cookies were captured from the Playwright session.")
+                return False
+        except Exception as e:
+            logger.error("Playwright browser authentication failed: %s", str(e))
+            raise
 
     def _save_to_file(self) -> None:
         """Saves current cookies and headers to session.json."""
@@ -202,40 +239,35 @@ class AuthManager:
 
     def refresh_session(self) -> bool:
         """
-        Attempts to reload and re-establish the session.
-        If running interactively, prompts the user to refresh session.json.
+        Attempts to reload and re-establish the session using Playwright Persistent Context.
+        Launches the persistent browser for manual login and updates session cookies.
         """
-        logger.info("Session expired or invalid. Attempting session refresh...")
+        logger.info("Session expired or invalid. Launching Playwright persistent browser for re-authentication...")
 
-        # Re-read session file from disk
-        if self.session_path.exists():
-            success = self.load_session()
+        try:
+            success = self.login_with_playwright()
             if success:
-                logger.info("Session refreshed from disk configuration.")
+                logger.info("Session successfully refreshed and authenticated via Playwright.")
                 return True
+        except Exception as e:
+            logger.error("Playwright session refresh failed: %s", str(e))
 
-        # In interactive terminal mode, offer user to update credentials
+        # Fallback: offer manual cookie entry if running interactively
         if sys.stdin.isatty():
             print("\n" + "=" * 60)
-            print("AUTHENTICATION REQUIRED:")
-            print(f"Please update your active session cookies in: {self.session_path}")
-            print("Or paste updated 'Cookie' header string below (Press Enter to continue):")
+            print("AUTHENTICATION FALLBACK:")
+            print("Paste updated 'Cookie' header string below (or Press Enter to abort):")
             print("=" * 60)
             try:
-                user_input = input("Cookie Header / Press Enter to reload from file: ").strip()
+                user_input = input("Cookie Header: ").strip()
                 if user_input:
                     self.set_cookie_string(user_input)
-                    # Save to file
-                    data = {"cookies": self.cookies, "headers": self.headers}
-                    with open(self.session_path, "w", encoding="utf-8") as f:
-                        json.dump(data, f, indent=2)
-                    logger.info("Session updated and saved to %s", self.session_path.name)
+                    self._save_to_file()
+                    logger.info("Session updated from manual cookie input.")
                     return True
-                else:
-                    return self.load_session()
             except (EOFError, KeyboardInterrupt):
                 raise AuthExpiredError("User aborted session authentication prompt.")
 
         raise AuthExpiredError(
-            f"Authentication failed. Please update valid session cookies in {self.session_path} and restart."
+            f"Authentication failed. Please launch with Playwright to authenticate or update {self.session_path} and restart."
         )

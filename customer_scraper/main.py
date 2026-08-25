@@ -166,12 +166,22 @@ def read_customer_ids(file_path: Path) -> List[str]:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Customer Scraping Automation")
+    parser.add_argument("--login", action="store_true", help="Launch Playwright persistent browser window for manual login")
     parser.add_argument("--import-curl", type=str, help="Import session headers and cookies from a copied cURL command")
     parser.add_argument("--set-cookie", type=str, help="Set cookie string directly")
     args = parser.parse_args()
 
     # 1. Initialize Components
     auth_manager = AuthManager(SESSION_CONFIG_PATH)
+
+    if args.login:
+        logger.info("Manual login requested via --login flag.")
+        success = auth_manager.login_with_playwright()
+        if success:
+            print("\n[+] Browser session authenticated and persistent profile updated!")
+        else:
+            print("\n[-] Login could not be completed.")
+        return
 
     if args.import_curl:
         success = auth_manager.import_curl(args.import_curl)
@@ -191,34 +201,16 @@ def main():
     logger.info("START - Customer Scraping Automation")
     logger.info("==========================================")
 
+    # If no session cookies found, launch Playwright Persistent Context browser
     if not auth_manager.cookies:
-        print("\n" + "=" * 70)
-        print("  AUTHENTICATION REQUIRED")
-        print("=" * 70)
-        print("No active session cookies were detected.")
-        print("Please paste ANY of the following:")
-        print("  1. A copied cURL command from Chrome DevTools (Network tab)")
-        print("  2. The raw 'Cookie' header string from your browser")
-        print("=" * 70)
-
-        if sys.stdin.isatty():
-            try:
-                user_input = input("Paste cURL or Cookie here (or Press Enter to exit): ").strip()
-                if user_input:
-                    if user_input.startswith("curl") or "-H" in user_input or "--cookie" in user_input:
-                        auth_manager.import_curl(user_input)
-                    else:
-                        auth_manager.set_cookie_string(user_input)
-                        auth_manager._save_to_file()
-                    print(f"[+] Session configuration saved to {SESSION_CONFIG_PATH.name}!")
-                else:
-                    print("[-] No session provided. Please configure config/session.json and restart.")
-                    return
-            except (KeyboardInterrupt, EOFError):
-                print("\n[-] Aborted.")
+        logger.info("No active session cookies found. Launching Playwright persistent browser...")
+        try:
+            auth_success = auth_manager.login_with_playwright()
+            if not auth_success or not auth_manager.cookies:
+                logger.error("Authentication required to proceed. Please run with --login or populate valid credentials.")
                 return
-        else:
-            logger.error("No active session cookies found in %s. Please populate it and restart.", SESSION_CONFIG_PATH)
+        except Exception as e:
+            logger.error("Authentication error: %s", str(e))
             return
 
     api_client = APIClient(auth_manager)
