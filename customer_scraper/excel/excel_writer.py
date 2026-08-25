@@ -138,6 +138,21 @@ class ExcelWriter:
             except Exception as e:
                 logger.warning("Could not delete pending file: %s", str(e))
 
+    def _clean_date_str(self, val: Any) -> str:
+        """Strips time component from date string if present."""
+        if val is None:
+            return ""
+        s = str(val).strip()
+        if not s or s.lower() in ("null", "none"):
+            return ""
+        if "T" in s:
+            return s.split("T")[0].strip()
+        if " " in s:
+            return s.split(" ")[0].strip()
+        if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+            return s[:10]
+        return s
+
     def _format_customer_rows(self, data: Dict[str, Any], sr_no: Any) -> List[List[Any]]:
         """
         Formats customer scraped data into one or more Excel row lists.
@@ -146,8 +161,8 @@ class ExcelWriter:
         account_name = data.get("account_name", "")
         support_manager = data.get("support_manager", "")
         seller_tier = data.get("seller_tier", "")
-        signed_up_date = data.get("signed_up_date", "")
-        live_date = data.get("live_date", "")
+        signed_up_date = self._clean_date_str(data.get("signed_up_date", ""))
+        live_date = self._clean_date_str(data.get("live_date", ""))
 
         # Case 1: Support Manager is Yes -> Only API #1 info
         if support_manager == "Yes":

@@ -76,6 +76,43 @@ class API1Scraper:
         val_str = str(curr).strip()
         return "" if val_str.lower() in ("null", "none") else val_str
 
+    def _format_date_only(self, val: Any) -> str:
+        """
+        Extracts only the date portion (YYYY-MM-DD) from timestamp strings, ISO dates, or epochs.
+        """
+        if val is None:
+            return ""
+        val_str = str(val).strip()
+        if not val_str or val_str.lower() in ("null", "none"):
+            return ""
+
+        # Handle ISO strings with 'T' (e.g. 2019-07-04T05:11:39.000+00:00)
+        if "T" in val_str:
+            return val_str.split("T")[0].strip()
+
+        # Handle space-separated date & time (e.g. 2019-07-04 05:11:39)
+        if " " in val_str:
+            return val_str.split(" ")[0].strip()
+
+        # Handle numeric epoch timestamp
+        if val_str.isdigit():
+            try:
+                import datetime
+                num = int(val_str)
+                if num > 100000000000:
+                    dt = datetime.datetime.fromtimestamp(num / 1000.0)
+                else:
+                    dt = datetime.datetime.fromtimestamp(num)
+                return dt.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
+        # Return first 10 chars if it resembles YYYY-MM-DD
+        if len(val_str) >= 10 and val_str[4] == "-" and val_str[7] == "-":
+            return val_str[:10]
+
+        return val_str
+
     def get_seller_details(self, customer_id: str) -> Dict[str, Any]:
         """
         Fetches and extracts API #1 seller details.
@@ -86,8 +123,8 @@ class API1Scraper:
                 account_name: str
                 support_manager: "Yes" | "No"
                 seller_tier: str
-                signed_up_date: str
-                live_date: str
+                signed_up_date: str (YYYY-MM-DD only)
+                live_date: str (YYYY-MM-DD only)
         """
         endpoint = API1_ENDPOINT.format(customer_id=customer_id)
         logger.info("API #1 started for customer ID: %s", customer_id)
@@ -122,11 +159,13 @@ class API1Scraper:
             # Secondary fallback if structure varies
             seller_tier = self._safe_get(result, "darwin_tier_v2", "tier_name")
 
-        # 4. Signed Up Date: result.profileInfo.created_at
-        signed_up_date = self._safe_get(result, "profileInfo", "created_at")
+        # 4. Signed Up Date: result.profileInfo.created_at (formatted to date only)
+        raw_signed_up = self._safe_get(result, "profileInfo", "created_at")
+        signed_up_date = self._format_date_only(raw_signed_up)
 
-        # 5. Live Date: result.liveDate
-        live_date = self._safe_get(result, "liveDate")
+        # 5. Live Date: result.liveDate (formatted to date only)
+        raw_live_date = self._safe_get(result, "liveDate")
+        live_date = self._format_date_only(raw_live_date)
 
         logger.info("API #1 successful for customer ID: %s", customer_id)
 

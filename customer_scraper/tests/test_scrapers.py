@@ -50,7 +50,7 @@ class TestAPI1Scraper(unittest.TestCase):
         self.assertEqual(res["account_name"], "Seller One")
         self.assertEqual(res["support_manager"], "No")
         self.assertEqual(res["seller_tier"], "Silver")
-        self.assertEqual(res["signed_up_date"], "2022-01-15T10:00:00Z")
+        self.assertEqual(res["signed_up_date"], "2022-01-15")
         self.assertEqual(res["live_date"], "2022-02-01")
 
     def test_support_manager_yes_when_manager_field_present(self):
