@@ -116,15 +116,28 @@ class APIClient:
 
                     # For 5xx server errors, retry with backoff
                     if response.status_code >= 500:
-                        logger.warning(
-                            "Server error %d from %s. Retrying in %d seconds...",
-                            response.status_code,
-                            full_url,
-                            BACKOFF_FACTOR ** retry_count,
-                        )
                         retry_count += 1
-                        time.sleep(BACKOFF_FACTOR ** retry_count)
-                        continue
+                        if retry_count < MAX_REQUEST_RETRIES:
+                            logger.warning(
+                                "Server error %d from %s. Retrying in %d seconds...",
+                                response.status_code,
+                                full_url,
+                                BACKOFF_FACTOR ** retry_count,
+                            )
+                            time.sleep(BACKOFF_FACTOR ** retry_count)
+                            continue
+                        else:
+                            logger.warning(
+                                "Server error %d from %s after %d attempts. Skipping endpoint.",
+                                response.status_code,
+                                full_url,
+                                MAX_REQUEST_RETRIES
+                            )
+                            raise APIResponseError(
+                                f"Server error {response.status_code} on {full_url}",
+                                status_code=response.status_code,
+                                response_text=response.text[:200]
+                            )
 
                 except (requests.ConnectionError, requests.Timeout) as net_err:
                     retry_count += 1

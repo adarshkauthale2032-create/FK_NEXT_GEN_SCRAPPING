@@ -143,7 +143,21 @@ class API2Scraper:
             api2_headers["FK-CSRF-TOKEN"] = csrf_token
 
         logger.info("API #2 started for customer ID: %s (Requesting up to %d listings)", customer_id, LISTING_BATCH_SIZE)
-        response_data = self.api_client.post(endpoint, json_data=payload, headers=api2_headers)
+        try:
+            response_data = self.api_client.post(endpoint, json_data=payload, headers=api2_headers)
+        except Exception as e:
+            logger.warning(
+                "API #2 encountered an error for customer %s (%s). Proceeding with empty listing details so API #1 and API #3 data can be saved.",
+                customer_id,
+                str(e)
+            )
+            return {
+                "customer_id": str(customer_id).strip(),
+                "listing_titles": [],
+                "is_brand": "Possibly a Seller",
+                "brand_name": "",
+                "listing_count": 0,
+            }
 
         raw_listings = self._extract_listings_list(response_data)
         logger.info("API #2 received %d raw listing items for customer ID: %s", len(raw_listings), customer_id)

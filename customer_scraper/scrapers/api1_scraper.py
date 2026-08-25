@@ -92,7 +92,12 @@ class API1Scraper:
         endpoint = API1_ENDPOINT.format(customer_id=customer_id)
         logger.info("API #1 started for customer ID: %s", customer_id)
 
-        response_data = self.api_client.get(endpoint)
+        try:
+            response_data = self.api_client.get(endpoint)
+        except Exception as e:
+            logger.warning("API #1 encountered an error for customer %s (%s). Proceeding with fallback.", customer_id, str(e))
+            response_data = {}
+
         if not isinstance(response_data, dict):
             logger.warning("API #1 returned non-dict response for %s", customer_id)
             response_data = {}
