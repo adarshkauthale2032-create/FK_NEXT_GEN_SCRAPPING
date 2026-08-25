@@ -50,7 +50,7 @@ API3_ENDPOINT = "/getSellerContacts?sellerId={customer_id}"
 # Scraping & Business Rules
 BRAND_THRESHOLD = 12  # Must be strictly > 12 to be considered "Possibly a Brand"
 LISTING_BATCH_SIZE = 20  # Fetch up to 20 listings in API #2
-MAX_SELLER_LIMIT = 1000  # Automatically stop scraping after first 1000 sellers
+CHUNK_SIZE = 1000  # Number of sellers per output Excel / CSV batch file (e.g. 1-1000, 1001-2000, etc.)
 
 # HTTP & Retry Settings
 CONNECT_TIMEOUT = 10  # seconds to establish TCP connection

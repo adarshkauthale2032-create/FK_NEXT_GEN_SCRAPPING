@@ -191,6 +191,33 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.assertEqual(processed_count, limit)
         self.assertEqual(len(self.tracker.completed_ids), limit)
 
+    def test_multi_batch_chunking_across_inputs(self):
+        # Test simulated 6 sellers with chunk_size = 2 -> 3 batch files created
+        chunk_dir = self.test_dir / "integration_batches"
+        chunk_writer = ExcelWriter(output_dir=chunk_dir, chunk_size=2)
+
+        self.mock_client.get.return_value = {
+            "result": {
+                "displayName": "Batch Seller",
+                "supportRole": {"name": "Manager Alex"},
+                "liveDate": "2023-01-01"
+            }
+        }
+
+        for i in range(1, 7):
+            c_id = f"BATCH_ID_{i:03d}"
+            data = self.api1.get_seller_details(c_id)
+            chunk_writer.append_customer(data, sr_no=i)
+            self.tracker.mark_completed(c_id)
+
+        # Expect 3 xlsx and 3 csv files:
+        # 1 to 2, 3 to 4, 5 to 6
+        for start, end in [(1, 2), (3, 4), (5, 6)]:
+            xlsx = chunk_dir / f"scraped_data_{start}_to_{end}.xlsx"
+            csv_f = chunk_dir / f"scraped_data_{start}_to_{end}.csv"
+            self.assertTrue(xlsx.exists(), f"{xlsx.name} should exist")
+            self.assertTrue(csv_f.exists(), f"{csv_f.name} should exist")
+
 
 if __name__ == "__main__":
     unittest.main()

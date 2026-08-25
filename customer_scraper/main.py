@@ -2,8 +2,9 @@
 Main Orchestration Script for Customer Scraping Automation.
 
 Processes customer/seller IDs sequentially, calls API #1, #2, #3, evaluates
-business rules, handles authentication refresh, persists output to Excel,
-and guarantees resumability and data integrity.
+business rules, handles authentication refresh, automatically splits output into
+1,000-record Excel (.xlsx) and CSV (.csv) batch files, and guarantees resumability
+and data integrity.
 """
 
 from datetime import datetime
@@ -22,12 +23,12 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from config.settings import (
+    CHUNK_SIZE,
     INPUT_FILE_PATH,
     INPUT_SHEET_NAME,
     INPUT_COLUMN_NAME,
     LOG_FILE_PATH,
-    MAX_SELLER_LIMIT,
-    OUTPUT_EXCEL_PATH,
+    OUTPUT_DIR,
     PROGRESS_FILE_PATH,
     SESSION_CONFIG_PATH,
 )
@@ -114,13 +115,13 @@ class ProgressTracker:
 
     def sync_with_excel(self, excel_ids: Set[str]) -> None:
         """
-        Synchronizes state with completed IDs found in the Excel workbook.
+        Synchronizes state with completed IDs found across all batch files.
         """
         if excel_ids:
             before_count = len(self.completed_ids)
             self.completed_ids.update(excel_ids)
             if len(self.completed_ids) > before_count:
-                logger.info("Synchronized progress: found %d completed IDs in Excel.", len(self.completed_ids))
+                logger.info("Synchronized progress: found %d completed IDs in output files.", len(self.completed_ids))
                 self._save()
 
     def is_completed(self, customer_id: str) -> bool:
@@ -296,7 +297,8 @@ def main():
     parser = argparse.ArgumentParser(description="Customer Scraping Automation")
     parser.add_argument("--import-curl", type=str, help="Import session headers and cookies from a copied cURL command")
     parser.add_argument("--set-cookie", type=str, help="Set cookie string directly")
-    parser.add_argument("--limit", type=int, default=MAX_SELLER_LIMIT, help=f"Maximum number of seller records to scrape (default: {MAX_SELLER_LIMIT})")
+    parser.add_argument("--chunk-size", type=int, default=CHUNK_SIZE, help=f"Number of sellers per output batch file (default: {CHUNK_SIZE})")
+    parser.add_argument("--limit", type=int, default=None, help="Optional max limit of sellers to scrape across all batches")
     args = parser.parse_args()
 
     # 1. Initialize Components
@@ -356,10 +358,11 @@ def main():
     api2 = API2Scraper(api_client)
     api3 = API3Scraper(api_client)
     
-    excel_writer = ExcelWriter()
+    chunk_size = args.chunk_size or CHUNK_SIZE
+    excel_writer = ExcelWriter(chunk_size=chunk_size)
     progress_tracker = ProgressTracker()
 
-    # 2. Synchronize progress with existing Excel workbook
+    # 2. Synchronize progress with existing output files
     excel_completed = excel_writer.get_completed_customer_ids()
     progress_tracker.sync_with_excel(excel_completed)
 
@@ -373,22 +376,23 @@ def main():
         logger.info("END - Scraper finished (No input).")
         return
 
-    # Calculate current sequential Sr No counter
+    # Calculate current sequential Sr No counter across all batches
     current_sr_no = excel_writer.get_current_customer_count() + 1
 
     total_ids = len(customer_ids)
-    max_limit = args.limit if args.limit is not None else MAX_SELLER_LIMIT
+    max_limit = args.limit
     processed_in_session = 0
     skipped_count = 0
     failed_count = 0
 
-    logger.info("Total inputs available: %d | Target scrape limit: %d sellers", total_ids, max_limit)
+    logger.info("Total inputs available: %d | Batch chunk size: %d sellers/file", total_ids, chunk_size)
+    if max_limit:
+        logger.info("Configured global scrape limit: %d sellers", max_limit)
 
     try:
         for index, customer_id in enumerate(customer_ids, start=1):
-            # Stop condition: check if we reached the seller limit
-            if processed_in_session >= max_limit:
-                logger.info("Reached target limit of %d scraped sellers. Stopping script.", max_limit)
+            if max_limit and processed_in_session >= max_limit:
+                logger.info("Reached global target limit of %d scraped sellers. Stopping script.", max_limit)
                 break
 
             # Check if customer was already completed
@@ -398,6 +402,12 @@ def main():
                 continue
 
             try:
+                # Calculate current batch metrics and target paths
+                batch_num = ((current_sr_no - 1) // chunk_size) + 1
+                batch_pos = ((current_sr_no - 1) % chunk_size) + 1
+                target_excel = excel_writer.get_excel_path_for_sr(current_sr_no)
+                target_csv = excel_writer.get_csv_path_for_sr(current_sr_no)
+
                 # Step 1: Execute API #1 (Customer & Seller Details)
                 api1_data = api1.get_seller_details(customer_id)
                 account_name = api1_data.get("account_name", "")
@@ -409,17 +419,22 @@ def main():
                     save_success = excel_writer.append_customer(api1_data, sr_no=current_sr_no)
                     if save_success:
                         progress_tracker.mark_completed(customer_id)
+                        logger.info(
+                            "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Tier: %s | Support Manager: Yes -> SAVED (%s & %s)",
+                            index, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, tier, target_excel.name, target_csv.name
+                        )
+                        if current_sr_no % chunk_size == 0:
+                            logger.info(
+                                "🎉 [BATCH COMPLETED] Batch #%d (%d sellers) fully saved to %s and %s!",
+                                batch_num, chunk_size, target_excel.name, target_csv.name
+                            )
                         current_sr_no += 1
                         processed_in_session += 1
-                        logger.info(
-                            "[Progress %d/%d | Scraped %d/%d] ID: %s | Account: %s | Tier: %s | Support Manager: Yes -> SAVED (Skipped API #2/#3)",
-                            index, total_ids, processed_in_session, max_limit, customer_id, account_name, tier
-                        )
-                        if processed_in_session >= max_limit:
-                            logger.info("Reached target limit of %d scraped sellers. Stopping script.", max_limit)
+                        if max_limit and processed_in_session >= max_limit:
+                            logger.info("Reached global target limit of %d scraped sellers. Stopping script.", max_limit)
                             break
                     else:
-                        logger.error("Failed to persist data to Excel for customer ID: %s", customer_id)
+                        logger.error("Failed to persist data for customer ID: %s", customer_id)
                     continue
 
                 # Step 2: Execute API #2 (GraphQL Listings & Brand Analysis)
@@ -438,22 +453,27 @@ def main():
                     **api3_data,
                 }
 
-                # Step 5: Save to Excel
+                # Step 5: Save to Excel and CSV
                 save_success = excel_writer.append_customer(combined_record, sr_no=current_sr_no)
                 if save_success:
                     progress_tracker.mark_completed(customer_id)
-                    current_sr_no += 1
-                    processed_in_session += 1
                     brand_info = f"{is_brand} ({brand_name})" if brand_name else is_brand
                     logger.info(
-                        "[Progress %d/%d | Scraped %d/%d] ID: %s | Account: %s | Tier: %s | Listings: %d | Brand: %s -> SAVED",
-                        index, total_ids, processed_in_session, max_limit, customer_id, account_name, tier, listings_cnt, brand_info
+                        "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Tier: %s | Listings: %d | Brand: %s -> SAVED (%s & %s)",
+                        index, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, tier, listings_cnt, brand_info, target_excel.name, target_csv.name
                     )
-                    if processed_in_session >= max_limit:
-                        logger.info("Reached target limit of %d scraped sellers. Stopping script.", max_limit)
+                    if current_sr_no % chunk_size == 0:
+                        logger.info(
+                            "🎉 [BATCH COMPLETED] Batch #%d (%d sellers) fully saved to %s and %s!",
+                            batch_num, chunk_size, target_excel.name, target_csv.name
+                        )
+                    current_sr_no += 1
+                    processed_in_session += 1
+                    if max_limit and processed_in_session >= max_limit:
+                        logger.info("Reached global target limit of %d scraped sellers. Stopping script.", max_limit)
                         break
                 else:
-                    logger.error("Failed to persist data to Excel for customer ID: %s", customer_id)
+                    logger.error("Failed to persist data for customer ID: %s", customer_id)
 
             except AuthExpiredError as auth_err:
                 logger.critical("[ALERT] Authentication expired while processing %s: %s", customer_id, str(auth_err))
@@ -477,12 +497,12 @@ def main():
         logger.info("==========================================")
         logger.info("Scraping Summary:")
         logger.info("  Total input IDs:             %d", total_ids)
-        logger.info("  Target scrape limit:         %d", max_limit)
+        logger.info("  Batch chunk size:            %d sellers / file", chunk_size)
         logger.info("  Processed in this session:   %d", processed_in_session)
         logger.info("  Skipped (already completed): %d", skipped_count)
         logger.info("  Failed:                      %d", failed_count)
-        logger.info("  Total completed in Excel:    %d", len(progress_tracker.completed_ids))
-        logger.info("  Excel Output:                %s", OUTPUT_EXCEL_PATH)
+        logger.info("  Total completed sellers:     %d", len(progress_tracker.completed_ids))
+        logger.info("  Output Directory:            %s", OUTPUT_DIR)
         logger.info("==========================================")
 
 

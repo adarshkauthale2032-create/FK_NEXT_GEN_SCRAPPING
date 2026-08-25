@@ -155,6 +155,41 @@ class TestExcelWriter(unittest.TestCase):
         completed = self.writer.get_completed_customer_ids()
         self.assertIn("ID_LOCKED", completed)
 
+    def test_chunking_and_csv_generation(self):
+        output_dir = Path(self.test_dir) / "chunk_output"
+        chunk_writer = ExcelWriter(output_dir=output_dir, chunk_size=2)
+
+        # Customer 1 (Sr 1) -> Batch 1 (1 to 2)
+        c1 = {"customer_id": "C1", "account_name": "Seller 1", "support_manager": "Yes"}
+        chunk_writer.append_customer(c1, sr_no=1)
+
+        # Customer 2 (Sr 2) -> Batch 1 (1 to 2)
+        c2 = {"customer_id": "C2", "account_name": "Seller 2", "support_manager": "Yes"}
+        chunk_writer.append_customer(c2, sr_no=2)
+
+        # Customer 3 (Sr 3) -> Batch 2 (3 to 4)
+        c3 = {"customer_id": "C3", "account_name": "Seller 3", "support_manager": "Yes"}
+        chunk_writer.append_customer(c3, sr_no=3)
+
+        batch1_excel = output_dir / "scraped_data_1_to_2.xlsx"
+        batch1_csv = output_dir / "scraped_data_1_to_2.csv"
+        batch2_excel = output_dir / "scraped_data_3_to_4.xlsx"
+        batch2_csv = output_dir / "scraped_data_3_to_4.csv"
+
+        self.assertTrue(batch1_excel.exists())
+        self.assertTrue(batch1_csv.exists())
+        self.assertTrue(batch2_excel.exists())
+        self.assertTrue(batch2_csv.exists())
+
+        # Verify CSV content for batch 1 has headers and 2 sellers
+        csv_lines = batch1_csv.read_text(encoding="utf-8-sig").splitlines()
+        self.assertEqual(len(csv_lines), 3)  # Header + 2 data rows
+
+        # Verify completed IDs across all batches
+        completed = chunk_writer.get_completed_customer_ids()
+        self.assertEqual(completed, {"C1", "C2", "C3"})
+        self.assertEqual(chunk_writer.get_current_customer_count(), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

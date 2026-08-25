@@ -177,8 +177,22 @@ For each Customer ID:
 
 ---
 
-## 8. Excel Output Format
-Saved at: `output/scraped_data.xlsx`
+## 8. Batch Output Format (Excel & CSV)
+
+The scraper automatically splits output records into **1,000-seller batch files** (both `.xlsx` and `.csv` format) in the `output/` directory:
+
+* **Batch 1 (Records 1 - 1,000):**
+  * `output/scraped_data_1_to_1000.xlsx`
+  * `output/scraped_data_1_to_1000.csv`
+* **Batch 2 (Records 1,001 - 2,000):**
+  * `output/scraped_data_1001_to_2000.xlsx`
+  * `output/scraped_data_1001_to_2000.csv`
+* **Batch 3 (Records 2,001 - 3,000):**
+  * `output/scraped_data_2001_to_3000.xlsx`
+  * `output/scraped_data_2001_to_3000.csv`
+* ...and so on for all 5,000+ input records!
+
+Each batch is saved and flushed completely. As soon as a 1,000-record threshold is reached, that batch file is finalized and the scraper automatically creates and populates the next batch file.
 
 | Sr No | Customer ID | Account Name | Support Manager | Seller Tier | Signed Up Date | Live Date | Brand List (Title) | Listing Brand | Is Brand | Brand Name | Mobile Number | Registered Mobile Number | Email ID | Registered Email ID |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
