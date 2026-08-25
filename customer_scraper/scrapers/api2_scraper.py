@@ -108,23 +108,9 @@ class API2Scraper:
         """
         endpoint = API2_ENDPOINT.format(customer_id=customer_id)
 
-        # Define candidates for API #2 payload based on the live working browser request
+        # Define candidates for API #2 payload:
+        # Prioritize unrestricted active listings so all 20 listings are returned
         payload_candidates = [
-            {
-                "search_text": "",
-                "search_filters": {
-                    "potential_tag": ["MidPo"]
-                }
-            },
-            {
-                "search_text": "",
-                "search_filters": {
-                    "flipkart_release_date": {
-                        "from": 1782467123870
-                    },
-                    "potential_tag": ["MidPo"]
-                }
-            },
             {
                 "search_text": "",
                 "search_filters": {
@@ -134,6 +120,12 @@ class API2Scraper:
             {
                 "search_text": "",
                 "search_filters": {}
+            },
+            {
+                "search_text": "",
+                "search_filters": {
+                    "potential_tag": ["MidPo"]
+                }
             }
         ]
 
@@ -170,7 +162,9 @@ class API2Scraper:
                     )
                     return {
                         "customer_id": str(customer_id).strip(),
+                        "listings": [],
                         "listing_titles": [],
+                        "listing_brands": [],
                         "is_brand": "Possibly a Seller",
                         "brand_name": "",
                         "listing_count": 0,
@@ -178,9 +172,6 @@ class API2Scraper:
 
         raw_listings = self._extract_listings_list(response_data)
         logger.info("API #2 received %d raw listing items for customer ID: %s", len(raw_listings), customer_id)
-
-        titles: List[str] = []
-        brands: List[str] = []
 
         # Process up to LISTING_BATCH_SIZE items
         listings: List[Dict[str, str]] = []
@@ -215,6 +206,20 @@ class API2Scraper:
                 titles.append(title_str)
                 brands.append(brand_str)
                 listings.append({"title": title_str, "brand": brand_str})
+
+        # Print extracted brand details to console for user reference
+        import json
+        print("\n" + "=" * 70)
+        print(f"[API #2 DEBUG] Customer ID: {customer_id}")
+        print(f"[API #2 DEBUG] Total listings returned: {len(raw_listings)} (Extracted: {len(titles)})")
+        for i, lst in enumerate(listings, start=1):
+            print(f"  {i:02d}. Title: '{lst['title']}' | Brand: '{lst['brand']}'")
+        if not listings:
+            print("  (No listings found in response)")
+            # Print sample response keys
+            if isinstance(response_data, dict):
+                print(f"  Response Keys: {list(response_data.keys())}")
+        print("=" * 70 + "\n")
 
         is_brand, brand_name = self._evaluate_brand_rule(brands)
         logger.info(
