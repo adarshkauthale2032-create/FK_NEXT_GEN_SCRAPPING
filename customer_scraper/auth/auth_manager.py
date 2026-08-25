@@ -64,6 +64,12 @@ class AuthManager:
                         self.headers.update(file_headers)
                         self.session.headers.update(file_headers)
 
+                    # Automatically ensure FK-CSRF-TOKEN header is set if present in cookies
+                    if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies and "FK-CSRF-TOKEN" not in self.headers:
+                        csrf_val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
+                        self.headers["FK-CSRF-TOKEN"] = csrf_val
+                        self.session.headers["FK-CSRF-TOKEN"] = csrf_val
+
                     loaded = True
                     logger.info("Session configuration successfully loaded from %s", self.session_path.name)
             except Exception as e:

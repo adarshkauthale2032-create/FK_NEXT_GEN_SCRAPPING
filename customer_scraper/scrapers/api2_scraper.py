@@ -127,8 +127,23 @@ class API2Scraper:
             }
         }
 
+        # Ensure CSRF token and specific Referer are supplied for API #2 POST request
+        csrf_token = (
+            self.api_client.auth_manager.headers.get("FK-CSRF-TOKEN")
+            or self.api_client.auth_manager.cookies.get("XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h")
+            or ""
+        )
+        api2_headers = {
+            "Content-Type": "application/json",
+            "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
+            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}",
+            "Accept": "*/*",
+        }
+        if csrf_token:
+            api2_headers["FK-CSRF-TOKEN"] = csrf_token
+
         logger.info("API #2 started for customer ID: %s (Requesting up to %d listings)", customer_id, LISTING_BATCH_SIZE)
-        response_data = self.api_client.post(endpoint, json_data=payload)
+        response_data = self.api_client.post(endpoint, json_data=payload, headers=api2_headers)
 
         raw_listings = self._extract_listings_list(response_data)
         logger.info("API #2 received %d raw listing items for customer ID: %s", len(raw_listings), customer_id)
