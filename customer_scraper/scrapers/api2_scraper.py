@@ -109,23 +109,34 @@ class API2Scraper:
                 brand_name: str
                 listing_count: int
         """
-        endpoint = API2_ENDPOINT.format(customer_id=customer_id)
-        payload = {
-            "search_text": "",
-            "search_filters": {
-                "internal_state": "ACTIVE"
-            },
-            "column": {
-                "sort": {
-                    "column_name": "demand_weight",
-                    "sort_by": "DESC"
+        # Define candidates for API #2 payload based on the live working browser request
+        payload_candidates = [
+            {
+                "search_text": "",
+                "search_filters": {
+                    "potential_tag": ["MidPo"]
                 }
             },
-            "pagination": {
-                "batch_no": 0,
-                "batch_size": LISTING_BATCH_SIZE
+            {
+                "search_text": "",
+                "search_filters": {
+                    "flipkart_release_date": {
+                        "from": 1782467123870
+                    },
+                    "potential_tag": ["MidPo"]
+                }
+            },
+            {
+                "search_text": "",
+                "search_filters": {
+                    "internal_state": "ACTIVE"
+                }
+            },
+            {
+                "search_text": "",
+                "search_filters": {}
             }
-        }
+        ]
 
         # Ensure CSRF token and specific Referer are supplied for API #2 POST request
         csrf_token = (
@@ -143,21 +154,28 @@ class API2Scraper:
             api2_headers["FK-CSRF-TOKEN"] = csrf_token
 
         logger.info("API #2 started for customer ID: %s (Requesting up to %d listings)", customer_id, LISTING_BATCH_SIZE)
-        try:
-            response_data = self.api_client.post(endpoint, json_data=payload, headers=api2_headers)
-        except Exception as e:
-            logger.warning(
-                "API #2 encountered an error for customer %s (%s). Proceeding with empty listing details so API #1 and API #3 data can be saved.",
-                customer_id,
-                str(e)
-            )
-            return {
-                "customer_id": str(customer_id).strip(),
-                "listing_titles": [],
-                "is_brand": "Possibly a Seller",
-                "brand_name": "",
-                "listing_count": 0,
-            }
+        
+        response_data = None
+        for p_idx, payload in enumerate(payload_candidates):
+            try:
+                response_data = self.api_client.post(endpoint, json_data=payload, headers=api2_headers)
+                if response_data:
+                    break
+            except Exception as e:
+                logger.debug("API #2 payload variant %d failed for %s: %s", p_idx + 1, customer_id, str(e))
+                if p_idx == len(payload_candidates) - 1:
+                    logger.warning(
+                        "API #2 encountered an error for customer %s (%s). Proceeding with empty listing details.",
+                        customer_id,
+                        str(e)
+                    )
+                    return {
+                        "customer_id": str(customer_id).strip(),
+                        "listing_titles": [],
+                        "is_brand": "Possibly a Seller",
+                        "brand_name": "",
+                        "listing_count": 0,
+                    }
 
         raw_listings = self._extract_listings_list(response_data)
         logger.info("API #2 received %d raw listing items for customer ID: %s", len(raw_listings), customer_id)
