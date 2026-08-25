@@ -24,8 +24,8 @@ if str(BASE_DIR) not in sys.path:
 from config.settings import (
     INPUT_FILE_PATH,
     LOG_FILE_PATH,
+    OUTPUT_EXCEL_PATH,
     PROGRESS_FILE_PATH,
-    SESSION_CONFIG_PATH,
     SESSION_CONFIG_PATH,
 )
 from auth.auth_manager import AuthManager, AuthExpiredError
