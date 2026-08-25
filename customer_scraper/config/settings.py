@@ -29,6 +29,8 @@ BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
 # API Configuration
 BASE_URL = "https://suv-flipkart.seller-support.fkcloud.it"
+CDP_PORT = 9222
+CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
 
 API1_ENDPOINT = "/getSellerDetails?sellerId={customer_id}"
 API2_ENDPOINT = "/sellerDashboard/orchestrator/graphql?sellerId={customer_id}"

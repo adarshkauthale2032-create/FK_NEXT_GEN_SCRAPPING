@@ -97,7 +97,7 @@ class AuthManager:
                 loaded = True
                 logger.info("Session cookies loaded from environment variable FLIPKART_COOKIE")
 
-        # 3. Fallback: Attempt silent extraction from existing Playwright persistent profile
+        # 3. Fallback: Attempt extraction directly from opened browser
         if not loaded:
             try:
                 auto_cookies = self.playwright_handler.extract_existing_profile_cookies()
@@ -105,21 +105,21 @@ class AuthManager:
                     self.cookies.update(auto_cookies)
                     self.session.cookies.update(auto_cookies)
                     loaded = True
-                    logger.info("Loaded %d session cookies from persistent browser profile.", len(auto_cookies))
+                    logger.info("Loaded %d session cookies directly from opened browser.", len(auto_cookies))
                     self._save_to_file()
             except Exception as e:
-                logger.debug("Persistent profile cookie extraction notice: %s", str(e))
+                logger.debug("Opened browser cookie extraction notice: %s", str(e))
 
         return loaded
 
-    def login_with_playwright(self) -> bool:
+    def login_with_playwright(self, force_login_prompt: bool = False) -> bool:
         """
-        Launches the Playwright persistent browser context for user login,
-        captures session cookies and headers, and persists them.
+        Extracts session credentials directly from the opened browser.
+        If browser is not open, launches it and keeps it open without closing.
         """
-        logger.info("Starting Playwright persistent browser login session...")
+        logger.info("Extracting session from opened browser...")
         try:
-            session_data = self.playwright_handler.launch_login_session()
+            session_data = self.playwright_handler.get_or_prompt_session(force_login_prompt=force_login_prompt)
             new_cookies = session_data.get("cookies", {})
             new_headers = session_data.get("headers", {})
 
@@ -133,13 +133,13 @@ class AuthManager:
 
             if self.cookies:
                 self._save_to_file()
-                logger.info("Playwright session successfully authenticated and persisted.")
+                logger.info("Session successfully captured from opened browser and persisted.")
                 return True
             else:
-                logger.warning("No cookies were captured from the Playwright session.")
+                logger.warning("No cookies were captured from the opened browser.")
                 return False
         except Exception as e:
-            logger.error("Playwright browser authentication failed: %s", str(e))
+            logger.error("Session capture from opened browser failed: %s", str(e))
             raise
 
     def _save_to_file(self) -> None:
@@ -239,18 +239,17 @@ class AuthManager:
 
     def refresh_session(self) -> bool:
         """
-        Attempts to reload and re-establish the session using Playwright Persistent Context.
-        Launches the persistent browser for manual login and updates session cookies.
+        Attempts to reload and re-establish the session from the opened browser.
         """
-        logger.info("Session expired or invalid. Launching Playwright persistent browser for re-authentication...")
+        logger.info("Session expired or invalid. Re-authenticating from opened browser...")
 
         try:
-            success = self.login_with_playwright()
+            success = self.login_with_playwright(force_login_prompt=True)
             if success:
-                logger.info("Session successfully refreshed and authenticated via Playwright.")
+                logger.info("Session successfully refreshed from opened browser.")
                 return True
         except Exception as e:
-            logger.error("Playwright session refresh failed: %s", str(e))
+            logger.error("Session refresh from opened browser failed: %s", str(e))
 
         # Fallback: offer manual cookie entry if running interactively
         if sys.stdin.isatty():

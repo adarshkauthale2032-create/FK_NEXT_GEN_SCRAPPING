@@ -111,30 +111,29 @@ Example:
 
 ---
 
-## 5. Authentication & Playwright Persistent Context
+## 5. Authentication & Opened Browser Session Management
 
-The scraper uses **Playwright Persistent Context** (`browser_type.launch_persistent_context`) with a dedicated profile directory (`browser_profile/`).
+The scraper connects directly to an **opened browser** using Playwright / Chrome DevTools Protocol (CDP) and **keeps the browser window open** throughout execution:
 
 ### How It Works:
 
-1. **First Run / Fresh Session:**
-   - Run `python main.py` (or `python main.py --login`).
-   - If no active session exists, Playwright automatically launches Chromium with the persistent profile `browser_profile/`.
-   - Log in manually to Flipkart Seller Support in the opened browser window (complete SSO, OTP, or Captcha).
-   - Return to your terminal and press `[ENTER]`.
-   - Playwright captures all session cookies, local storage, indexedDB, and CSRF tokens into `browser_profile/` and `config/session.json`.
-   - The scraper immediately begins processing customer IDs.
+1. **Direct Connection to Opened Browser:**
+   - When `python main.py` runs, it checks for an already-opened browser on port `9222` (or launches one with the persistent `browser_profile/` directory).
+   - The browser window **remains open and will NOT be closed**.
 
-2. **Subsequent Runs:**
-   - Run `python main.py`.
-   - The scraper automatically reuses the existing persistent browser session without opening the browser or asking for login.
+2. **First Run / Manual Login:**
+   - The browser opens with the Flipkart Seller Support portal.
+   - You log in manually in that open browser window (SSO, OTP, Captcha).
+   - Press `[ENTER]` in the terminal.
+   - The scraper extracts active cookies and CSRF tokens directly from the open browser without closing it, and starts scraping immediately.
 
-3. **Session Expiry & Auto-Refresh:**
-   - If the Flipkart session expires during scraping (401/403/Redirect to SSO):
-   - The scraper automatically pauses and re-opens the Playwright persistent browser window.
-   - You log in manually once again in the browser.
-   - The updated session is persisted into `browser_profile/` and `config/session.json`.
-   - Scraping resumes immediately from the exact customer ID without losing progress.
+3. **Subsequent Runs:**
+   - Keep your browser open in the background!
+   - When you run `python main.py` again, the scraper immediately grabs the active session from your open browser in real-time. No new windows are spawned and no login is required.
+
+4. **When Session Expires:**
+   - If the website session expires, simply refresh/log in inside your already-open browser window and press `[ENTER]`.
+   - The scraper reads the refreshed session from the open browser and continues seamlessly.
 
 ---
 

@@ -63,7 +63,7 @@ class TestAuthManager(unittest.TestCase):
         }
 
         with patch.object(
-            auth.playwright_handler, "launch_login_session", return_value=mock_login_output
+            auth.playwright_handler, "get_or_prompt_session", return_value=mock_login_output
         ):
             success = auth.login_with_playwright()
             self.assertTrue(success)
