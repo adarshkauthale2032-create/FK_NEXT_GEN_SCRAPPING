@@ -37,7 +37,7 @@ customer_scraper/
 │   └── session.json.example    # Template for cookie/header session configuration
 │
 ├── input/
-│   └── customer_id_input.txt   # Line-separated customer/seller IDs
+│   └── customer_id_input.xlsx  # Excel workbook with 'Input Sheet' & 'seller_id' column
 │
 ├── output/
 │   ├── scraped_data.xlsx       # Output Excel sheet
@@ -86,18 +86,22 @@ customer_scraper/
 
 ## 4. Input Configuration
 
-Place your target customer/seller IDs into:
+Place your target customer / seller IDs into:
 ```text
-input/customer_id_input.txt
+input/customer_id_input.xlsx
 ```
-Format: One customer ID per line (empty lines and `#` comments are automatically ignored).
+* **Sheet Name:** `Input Sheet`
+* **Column Header:** `seller_id`
 
-Example:
-```text
-218598a2b41c4bcd
-123456789abcdef
-987654321abcdef
-```
+Example Excel structure:
+
+| seller_id |
+|---|
+| 218598a2b41c4bcd |
+| 123456789abcdef |
+| 987654321abcdef |
+
+*(Note: The scraper also supports fallback to `customer_id_input.txt` if `.xlsx` is not present).*
 
 ---
 

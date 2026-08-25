@@ -23,6 +23,8 @@ if str(BASE_DIR) not in sys.path:
 
 from config.settings import (
     INPUT_FILE_PATH,
+    INPUT_SHEET_NAME,
+    INPUT_COLUMN_NAME,
     LOG_FILE_PATH,
     OUTPUT_EXCEL_PATH,
     PROGRESS_FILE_PATH,
@@ -141,18 +143,143 @@ class ProgressTracker:
             logger.error("Failed to save progress marker: %s", str(e))
 
 
-def read_customer_ids(file_path: Path) -> List[str]:
+def ensure_input_excel_exists(excel_path: Path, txt_path: Optional[Path] = None) -> None:
     """
-    Reads customer IDs from the text file.
-    - Strips whitespace
-    - Ignores empty lines
-    - Preserves ordering
+    Ensures customer_id_input.xlsx exists.
+    If not, automatically populates it from customer_id_input.txt or default sample IDs.
     """
+    if excel_path.exists():
+        return
+
+    try:
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = INPUT_SHEET_NAME
+        ws.append([INPUT_COLUMN_NAME])
+
+        # Try reading from text file if available
+        ids_to_write = []
+        if txt_path and txt_path.exists():
+            with open(txt_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    c_id = line.strip()
+                    if c_id and not c_id.startswith("#"):
+                        ids_to_write.append(c_id)
+
+        if not ids_to_write:
+            ids_to_write = ["d519f67b462d4e10", "218598a2b41c4bcd", "aaa30e788efa4f6c", "1111218ddd74492b"]
+
+        for c_id in ids_to_write:
+            ws.append([str(c_id)])
+
+        excel_path.parent.mkdir(parents=True, exist_ok=True)
+        wb.save(excel_path)
+        logger.info(
+            "Created input template at %s with %d seller IDs in '%s' sheet under '%s' column.",
+            excel_path.name,
+            len(ids_to_write),
+            INPUT_SHEET_NAME,
+            INPUT_COLUMN_NAME,
+        )
+    except Exception as e:
+        logger.warning("Could not auto-create %s: %s", excel_path.name, str(e))
+
+
+def read_customer_ids(
+    file_path: Path,
+    sheet_name: str = INPUT_SHEET_NAME,
+    column_name: str = INPUT_COLUMN_NAME,
+) -> List[str]:
+    """
+    Reads customer / seller IDs from an Excel workbook (.xlsx) or text file (.txt).
+    For .xlsx files:
+      - Reads the sheet named `sheet_name` (default: 'Input Sheet')
+      - Finds the column with heading `column_name` (default: 'seller_id')
+      - Extracts all non-empty IDs in exact sequential order
+    """
+    customer_ids: List[str] = []
+
+    # If the configured .xlsx file does not exist, attempt auto-creation from .txt if present
+    if not file_path.exists() and file_path.suffix.lower() in (".xlsx", ".xlsm", ".xltx"):
+        txt_fallback = file_path.with_suffix(".txt")
+        ensure_input_excel_exists(file_path, txt_path=txt_fallback)
+
     if not file_path.exists():
         logger.error("Input file not found at %s", file_path)
         return []
 
-    customer_ids = []
+    # 1. Handle Excel (.xlsx / .xlsm / .xltx) input
+    if file_path.suffix.lower() in (".xlsx", ".xlsm", ".xltx"):
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(file_path, data_only=True)
+
+            # Find matching sheet (case-insensitive & whitespace trimmed)
+            target_sheet = None
+            for s_name in wb.sheetnames:
+                if s_name.strip().lower() == sheet_name.strip().lower():
+                    target_sheet = wb[s_name]
+                    break
+            if target_sheet is None:
+                for s_name in wb.sheetnames:
+                    if "input" in s_name.strip().lower():
+                        target_sheet = wb[s_name]
+                        break
+            if target_sheet is None:
+                target_sheet = wb.active
+                logger.warning("Sheet '%s' not found. Using active sheet '%s'.", sheet_name, target_sheet.title)
+
+            # Find target column heading in top rows (row 1 or row 2)
+            target_col_idx = 1
+            header_row = 1
+            col_found = False
+
+            for r in range(1, min(5, target_sheet.max_row + 1)):
+                for c in range(1, target_sheet.max_column + 1):
+                    val = target_sheet.cell(row=r, column=c).value
+                    if val is not None:
+                        val_str = str(val).strip().lower().replace(" ", "_").replace("-", "_")
+                        col_clean = column_name.strip().lower().replace(" ", "_").replace("-", "_")
+                        if val_str == col_clean or val_str in ("seller_id", "sellerid", "customer_id", "customerid", "id"):
+                            target_col_idx = c
+                            header_row = r
+                            col_found = True
+                            break
+                if col_found:
+                    break
+
+            # Read all IDs below header row
+            for r in range(header_row + 1, target_sheet.max_row + 1):
+                val = target_sheet.cell(row=r, column=target_col_idx).value
+                if val is not None:
+                    if isinstance(val, float) and val.is_integer():
+                        clean_id = str(int(val))
+                    else:
+                        clean_id = str(val).strip()
+
+                    if clean_id and clean_id.lower() not in ("none", "null", ""):
+                        customer_ids.append(clean_id)
+
+            wb.close()
+            logger.info(
+                "Read %d customer IDs from Excel file '%s' (Sheet: '%s', Column: '%s')",
+                len(customer_ids),
+                file_path.name,
+                target_sheet.title,
+                column_name,
+            )
+            return customer_ids
+
+        except Exception as e:
+            logger.error("Failed to read Excel input file %s: %s", file_path, str(e))
+            txt_fallback = file_path.with_suffix(".txt")
+            if txt_fallback.exists():
+                logger.info("Falling back to reading from %s...", txt_fallback.name)
+                return read_customer_ids(txt_fallback)
+            return []
+
+    # 2. Handle Plain Text (.txt) input
     with open(file_path, "r", encoding="utf-8") as f:
         for line in f:
             clean_line = line.strip()

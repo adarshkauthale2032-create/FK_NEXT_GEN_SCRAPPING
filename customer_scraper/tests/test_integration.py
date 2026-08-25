@@ -38,9 +38,24 @@ class TestIntegrationScraperFlow(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
-    def test_input_file_reader(self):
+    def test_input_file_reader_txt(self):
         ids = read_customer_ids(self.input_file)
         self.assertEqual(ids, ["ID001", "ID002", "ID003", "ID004"])
+
+    def test_input_file_reader_excel(self):
+        import openpyxl
+        input_xlsx = self.test_dir / "customer_id_input.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Input Sheet"
+        ws.append(["seller_id"])
+        ws.append(["XLSX_ID_1"])
+        ws.append(["XLSX_ID_2"])
+        ws.append(["XLSX_ID_3"])
+        wb.save(input_xlsx)
+
+        ids = read_customer_ids(input_xlsx)
+        self.assertEqual(ids, ["XLSX_ID_1", "XLSX_ID_2", "XLSX_ID_3"])
 
     def test_support_manager_yes_skips_api2_and_api3(self):
         customer_id = "ID_SUPP_YES"
