@@ -175,6 +175,7 @@ class ExcelWriter:
                 signed_up_date,
                 live_date,
                 "",  # Brand List
+                "",  # Listing Brand
                 "",  # Is Brand
                 "",  # Brand Name
                 "",  # Mobile Number
@@ -191,6 +192,7 @@ class ExcelWriter:
         email_id = data.get("email_id", "")
         registered_email = data.get("registered_email_id", "")
         listing_titles = data.get("listing_titles", [])
+        listing_brands = data.get("listing_brands", [])
 
         # If no listings were returned, write single row with listing fields blank
         if not listing_titles:
@@ -203,6 +205,7 @@ class ExcelWriter:
                 signed_up_date,
                 live_date,
                 "",
+                "",
                 is_brand,
                 brand_name,
                 mobile_number,
@@ -211,10 +214,11 @@ class ExcelWriter:
                 registered_email,
             ]]
 
-        # If listings exist (up to 20), output one row per listing
+        # If listings exist (up to 20), output one row per listing with its title and brand
         rows = []
         for idx, title in enumerate(listing_titles):
             current_sr = sr_no if idx == 0 else ""
+            brand_for_listing = listing_brands[idx] if idx < len(listing_brands) else ""
             rows.append([
                 current_sr,
                 customer_id,
@@ -224,6 +228,7 @@ class ExcelWriter:
                 signed_up_date,
                 live_date,
                 title,
+                brand_for_listing,
                 is_brand,
                 brand_name,
                 mobile_number,
@@ -300,7 +305,7 @@ class ExcelWriter:
                     cell.font = cell_font
                     cell.border = thin_border
                     # Align center for short meta, left for titles/names/emails
-                    if col_idx in (1, 2, 4, 5, 6, 7, 9, 11, 12):
+                    if col_idx in (1, 2, 4, 5, 6, 7, 9, 10, 11, 12, 13):
                         cell.alignment = center_align
                     else:
                         cell.alignment = left_align

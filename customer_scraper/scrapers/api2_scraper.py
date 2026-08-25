@@ -183,11 +183,25 @@ class API2Scraper:
         brands: List[str] = []
 
         # Process up to LISTING_BATCH_SIZE items
+        listings: List[Dict[str, str]] = []
+        titles: List[str] = []
+        brands: List[str] = []
+
         for item in raw_listings[:LISTING_BATCH_SIZE]:
             if not isinstance(item, dict):
                 continue
-            title_val = item.get("title")
-            brand_val = item.get("brand")
+            title_val = (
+                item.get("title")
+                or item.get("product_title")
+                or item.get("productTitle")
+                or item.get("listing_title")
+                or item.get("listingTitle")
+            )
+            brand_val = (
+                item.get("brand")
+                or item.get("brand_name")
+                or item.get("brandName")
+            )
 
             title_str = str(title_val).strip() if title_val is not None else ""
             if title_str.lower() in ("null", "none"):
@@ -197,9 +211,10 @@ class API2Scraper:
             if brand_str.lower() in ("null", "none"):
                 brand_str = ""
 
-            if title_str:
+            if title_str or brand_str:
                 titles.append(title_str)
-            brands.append(brand_str)
+                brands.append(brand_str)
+                listings.append({"title": title_str, "brand": brand_str})
 
         is_brand, brand_name = self._evaluate_brand_rule(brands)
         logger.info(
@@ -212,7 +227,9 @@ class API2Scraper:
 
         return {
             "customer_id": str(customer_id).strip(),
+            "listings": listings,
             "listing_titles": titles,
+            "listing_brands": brands,
             "is_brand": is_brand,
             "brand_name": brand_name,
             "listing_count": len(titles),

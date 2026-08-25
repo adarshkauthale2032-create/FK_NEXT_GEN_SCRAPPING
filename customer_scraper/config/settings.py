@@ -58,6 +58,7 @@ EXCEL_COLUMNS = [
     "Signed Up Date",
     "Live Date",
     "Brand List",
+    "Listing Brand",
     "Is Brand",
     "Brand Name",
     "Mobile Number",

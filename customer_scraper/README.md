@@ -174,14 +174,13 @@ For each Customer ID:
 ---
 
 ## 8. Excel Output Format
-
 Saved at: `output/scraped_data.xlsx`
 
-| Sr No | Customer ID | Account Name | Support Manager | Seller Tier | Signed Up Date | Live Date | Brand List | Is Brand | Brand Name | Mobile Number | Registered Mobile Number | Email ID | Registered Email ID |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | ID001 | Seller ABC | No | Silver | 2021-01-10 | 2021-02-15 | Product Title 1 | Possibly a Brand | BRANDX | 9876543210 | 9876543210 | abc@mail.com | abc@mail.com |
-| | ID001 | Seller ABC | No | Silver | 2021-01-10 | 2021-02-15 | Product Title 2 | Possibly a Brand | BRANDX | 9876543210 | 9876543210 | abc@mail.com | abc@mail.com |
-| 2 | ID002 | Seller XYZ | Yes | Gold | 2020-05-12 | 2020-06-01 | | | | | | | |
+| Sr No | Customer ID | Account Name | Support Manager | Seller Tier | Signed Up Date | Live Date | Brand List (Title) | Listing Brand | Is Brand | Brand Name | Mobile Number | Registered Mobile Number | Email ID | Registered Email ID |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | ID001 | Seller ABC | No | Silver | 2021-01-10 | 2021-02-15 | Product Title 1 | BRAND_X | Possibly a Brand | BRAND_X | 9876543210 | 9876543210 | abc@mail.com | abc@mail.com |
+| | ID001 | Seller ABC | No | Silver | 2021-01-10 | 2021-02-15 | Product Title 2 | BRAND_X | Possibly a Brand | BRAND_X | 9876543210 | 9876543210 | abc@mail.com | abc@mail.com |
+| 2 | ID002 | Seller XYZ | Yes | Gold | 2020-05-12 | 2020-06-01 | | | | | | | | |
 
 ---
 

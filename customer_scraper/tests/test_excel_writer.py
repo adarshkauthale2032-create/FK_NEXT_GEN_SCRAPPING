@@ -76,6 +76,7 @@ class TestExcelWriter(unittest.TestCase):
             "signed_up_date": "2022-03-10",
             "live_date": "2022-03-20",
             "listing_titles": ["Product Title 1", "Product Title 2", "Product Title 3"],
+            "listing_brands": ["BRAND_A", "BRAND_B", "BRAND_A"],
             "is_brand": "Possibly a Brand",
             "brand_name": "RETAIL_BRAND",
             "mobile_number": "9876543210",
@@ -97,21 +98,24 @@ class TestExcelWriter(unittest.TestCase):
         self.assertEqual(row2[0], 2)  # Sr No on first row
         self.assertEqual(row2[1], "CUST_002")
         self.assertEqual(row2[7], "Product Title 1")
-        self.assertEqual(row2[8], "Possibly a Brand")
-        self.assertEqual(row2[9], "RETAIL_BRAND")
-        self.assertEqual(row2[10], "9876543210")
+        self.assertEqual(row2[8], "BRAND_A")  # Listing Brand
+        self.assertEqual(row2[9], "Possibly a Brand")
+        self.assertEqual(row2[10], "RETAIL_BRAND")
+        self.assertEqual(row2[11], "9876543210")
 
         # Row 3 (second listing row)
         row3 = [cell.value for cell in ws[3]]
         self.assertEqual(row3[0] or "", "")  # Sr No empty on secondary rows
         self.assertEqual(row3[1], "CUST_002")
         self.assertEqual(row3[7], "Product Title 2")
+        self.assertEqual(row3[8], "BRAND_B")  # Listing Brand
 
         # Row 4 (third listing row)
         row4 = [cell.value for cell in ws[4]]
         self.assertEqual(row4[0] or "", "")
         self.assertEqual(row4[1], "CUST_002")
         self.assertEqual(row4[7], "Product Title 3")
+        self.assertEqual(row4[8], "BRAND_A")  # Listing Brand
 
     def test_get_completed_customer_ids(self):
         cust1 = {"customer_id": "ID_AAA", "support_manager": "Yes"}
