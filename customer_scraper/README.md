@@ -223,3 +223,4 @@ Saved at: `output/scraped_data.xlsx`
 3. **No customer IDs processed:**
    * Check `input/customer_id_input.txt` to ensure valid customer IDs are entered.
    * Check `output/progress.json` to see if those IDs have already been marked completed. Delete `progress.json` and `scraped_data.xlsx` if you want a complete fresh re-run.
+
