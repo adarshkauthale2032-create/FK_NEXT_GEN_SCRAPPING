@@ -70,14 +70,22 @@ class API3Scraper:
         # 1. Mobile number: loginMobileNumber
         mobile_number = self._safe_get(result, "loginMobileNumber")
 
-        # 2. Registered mobile number: primaryMobileNumber
-        registered_mobile_number = self._safe_get(result, "primaryMobileNumber")
+        # 2. Registered mobile number: result.profileInfo.mobile_number (fallback to primaryMobileNumber)
+        registered_mobile_number = (
+            self._safe_get(result, "profileInfo", "mobile_number")
+            or self._safe_get(result, "profileinfo", "mobile_number")
+            or self._safe_get(result, "primaryMobileNumber")
+        )
 
         # 3. Email ID: loginEmail
         email_id = self._safe_get(result, "loginEmail")
 
-        # 4. Registered email ID: primaryEmail
-        registered_email_id = self._safe_get(result, "primaryEmail")
+        # 4. Registered email ID: result.profileInfo.email_id (fallback to primaryEmail)
+        registered_email_id = (
+            self._safe_get(result, "profileInfo", "email_id")
+            or self._safe_get(result, "profileinfo", "email_id")
+            or self._safe_get(result, "primaryEmail")
+        )
 
         logger.info("API #3 successful for customer ID: %s", customer_id)
 

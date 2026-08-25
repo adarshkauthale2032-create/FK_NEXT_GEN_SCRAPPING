@@ -194,21 +194,25 @@ class TestAPI3Scraper(unittest.TestCase):
         self.mock_client = MagicMock(spec=APIClient)
         self.scraper = API3Scraper(self.mock_client)
 
-    def test_get_seller_contacts_success(self):
+    def test_get_seller_contacts_from_profile_info(self):
         self.mock_client.get.return_value = {
             "result": {
-                "loginMobileNumber": "9876543210",
-                "primaryMobileNumber": "9876543211",
-                "loginEmail": "login@example.com",
-                "primaryEmail": "primary@example.com",
+                "loginMobileNumber": "+919717321982",
+                "primaryMobileNumber": "+919717321982",
+                "loginEmail": "slowlorisstore@gmail.com",
+                "primaryEmail": "slowlorisstore@gmail.com",
+                "profileInfo": {
+                    "email_id": "profile_email@example.com",
+                    "mobile_number": "+919999354199",
+                }
             }
         }
         res = self.scraper.get_seller_contacts("ID001")
         self.assertEqual(res["customer_id"], "ID001")
-        self.assertEqual(res["mobile_number"], "9876543210")
-        self.assertEqual(res["registered_mobile_number"], "9876543211")
-        self.assertEqual(res["email_id"], "login@example.com")
-        self.assertEqual(res["registered_email_id"], "primary@example.com")
+        self.assertEqual(res["mobile_number"], "+919717321982")
+        self.assertEqual(res["registered_mobile_number"], "+919999354199")  # from profileInfo.mobile_number
+        self.assertEqual(res["email_id"], "slowlorisstore@gmail.com")
+        self.assertEqual(res["registered_email_id"], "profile_email@example.com")  # from profileInfo.email_id
 
     def test_get_seller_contacts_null_values(self):
         self.mock_client.get.return_value = {
