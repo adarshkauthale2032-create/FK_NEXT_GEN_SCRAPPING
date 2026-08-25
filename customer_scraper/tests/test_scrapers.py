@@ -181,12 +181,37 @@ class TestAPI2Scraper(unittest.TestCase):
         self.assertEqual(res["is_brand"], "Possibly a Seller")
         self.assertEqual(res["brand_name"], "")
 
-    def test_empty_listings(self):
-        self.mock_client.post.return_value = {"listing_data_response": []}
-        res = self.scraper.get_listings_and_brand("ID005")
-        self.assertEqual(len(res["listing_titles"]), 0)
-        self.assertEqual(res["is_brand"], "Possibly a Seller")
-        self.assertEqual(res["brand_name"], "")
+    def test_graphql_response_parsing(self):
+        mock_data = {
+            "data": {
+                "listingsManagementMetrics": {
+                    "listingRows": {
+                        "count": 100,
+                        "listingDataResponse": [
+                            {
+                                "title": f"Shoe {i}",
+                                "brand": "NIKE",
+                                "view": {"title": f"Shoe {i}", "brand": "NIKE"}
+                            }
+                            for i in range(15)
+                        ] + [
+                            {
+                                "title": f"Puma {i}",
+                                "brand": "PUMA",
+                                "view": {"title": f"Puma {i}", "brand": "PUMA"}
+                            }
+                            for i in range(5)
+                        ]
+                    }
+                }
+            }
+        }
+        self.mock_client.post.return_value = mock_data
+        res = self.scraper.get_listings_and_brand("ID_GQL")
+        self.assertEqual(len(res["listing_titles"]), 20)
+        self.assertEqual(len(res["listing_brands"]), 20)
+        self.assertEqual(res["is_brand"], "Possibly a Brand")
+        self.assertEqual(res["brand_name"], "NIKE")
 
 
 class TestAPI3Scraper(unittest.TestCase):

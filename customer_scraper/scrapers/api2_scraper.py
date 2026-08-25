@@ -1,11 +1,12 @@
 """
-API #2 Scraper: Brand & Listing Details.
+API #2 Scraper: Brand & Listing Details via GraphQL Orchestrator.
 
-Fetches up to 20 active listings for a customer/seller, extracts product titles,
-and applies the 12-of-20 frequency rule to classify as Possibly a Brand or Possibly a Seller.
+Fetches up to 20 active listings for a customer/seller using GetListingRows GraphQL query,
+extracts listing product titles and listing brands, and applies the 12-of-20 frequency rule.
 """
 
 from collections import Counter
+import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 from api.api_client import APIClient
@@ -13,10 +14,59 @@ from config.settings import API2_ENDPOINT, BRAND_THRESHOLD, LISTING_BATCH_SIZE
 
 logger = logging.getLogger("customer_scraper")
 
+GET_LISTING_ROWS_QUERY = """query GetListingRows($input: ListingsManagementMetricInput) {
+  listingsManagementMetrics(input: $input) {
+    listingRows {
+      count
+      listingDataResponse {
+        listingId
+        skuId
+        productId
+        vertical
+        hsn
+        brand
+        view {
+          title
+          imageUrl
+        }
+        sellerId
+        attributes {
+          internalState
+          fkReleaseDate
+          verticalDisplayName
+          serviceProfile
+          listingTier
+          shippingDays
+          procurementType
+          ssp
+          esp
+          mrp
+          shippingProvider
+          localShippingFeeFromBuyer
+          zonalShippingFeeFromBuyer
+          nationalShippingFeeFromBuyer
+          subsidizedShipping
+          potentialRfaLoss
+          potentialRfaUnit
+          minimumOrderQuantity
+          recommendedMinimumOrderQuantity
+          recommendedMinoqFsp
+          recommendedMinoqMaxFsp
+          potentialTag
+          reasonForDeactivation
+          reasonForArchival
+          zuluChartStatus
+          visibilityStatePostQc
+        }
+      }
+    }
+  }
+}"""
+
 
 class API2Scraper:
     """
-    Scraper module for API #2 (listingsDataForStates).
+    Scraper module for API #2 (GraphQL GetListingRows).
     """
 
     def __init__(self, api_client: APIClient):
@@ -24,48 +74,43 @@ class API2Scraper:
 
     def _extract_listings_list(self, response_data: Any) -> List[Dict[str, Any]]:
         """
-        Safely extracts the listings list from various possible response structures.
+        Safely extracts the listings list from the GraphQL response structure.
         """
-        if not response_data:
+        if not isinstance(response_data, dict):
             return []
 
-        # Case 1: Directly a list
-        if isinstance(response_data, list):
-            return response_data
-
-        if isinstance(response_data, dict):
-            # Case 2: Under 'listing_data_response'
-            if "listing_data_response" in response_data:
-                val = response_data["listing_data_response"]
-                if isinstance(val, list):
-                    return val
-
-            # Case 3: Under 'result' -> 'listing_data_response' or 'result' -> 'listings'
-            result = response_data.get("result")
-            if isinstance(result, dict):
-                for key in ("listing_data_response", "listings", "data", "listingData"):
-                    val = result.get(key)
-                    if isinstance(val, list):
-                        return val
-            elif isinstance(result, list):
-                return result
-
-            # Case 4: Under 'response' -> 'listing_data_response'
-            resp_node = response_data.get("response")
-            if isinstance(resp_node, dict):
-                for key in ("listing_data_response", "listings", "data"):
-                    val = resp_node.get(key)
-                    if isinstance(val, list):
-                        return val
-
-            # Case 5: Under 'data'
+        # 1. Primary path: data.listingsManagementMetrics.listingRows.listingDataResponse
+        try:
             data_node = response_data.get("data")
-            if isinstance(data_node, list):
-                return data_node
-            if isinstance(data_node, dict) and "listing_data_response" in data_node:
-                val = data_node["listing_data_response"]
-                if isinstance(val, list):
-                    return val
+            if isinstance(data_node, dict):
+                metrics = data_node.get("listingsManagementMetrics")
+                if isinstance(metrics, dict):
+                    rows = metrics.get("listingRows")
+                    if isinstance(rows, dict):
+                        resp_list = rows.get("listingDataResponse")
+                        if isinstance(resp_list, list):
+                            return resp_list
+        except Exception:
+            pass
+
+        # 2. General fallbacks
+        for path in [
+            ["listingDataResponse"],
+            ["data", "listingDataResponse"],
+            ["result", "listing_data_response"],
+            ["listing_data_response"],
+            ["result", "listings"],
+            ["listings"],
+        ]:
+            curr = response_data
+            for p in path:
+                if isinstance(curr, dict):
+                    curr = curr.get(p)
+                else:
+                    curr = None
+                    break
+            if isinstance(curr, list):
+                return curr
 
         return []
 
@@ -81,7 +126,6 @@ class API2Scraper:
             is_brand = "Possibly a Seller"
             brand_name = ""
         """
-        # Filter out empty/null/none brand values
         valid_brands = [
             b.strip() for b in brands
             if b and str(b).strip().lower() not in ("null", "none", "")
@@ -99,99 +143,94 @@ class API2Scraper:
 
     def get_listings_and_brand(self, customer_id: str) -> Dict[str, Any]:
         """
-        Fetches up to 20 listings and determines brand classification.
+        Fetches up to 20 listings via GraphQL and determines brand classification.
 
         Returns:
             Dict containing:
                 customer_id: str
+                listings: List[Dict[str, str]]
                 listing_titles: List[str]
+                listing_brands: List[str]
+                is_brand: "Possibly a Brand" | "Possibly a Seller"
+                brand_name: str
+                listing_count: int
         """
         endpoint = API2_ENDPOINT.format(customer_id=customer_id)
 
-        # Exact payload from the working browser cURL
-        payload_candidates = [
-            {
-                "search_text": "",
-                "search_filters": {
-                    "internal_state": "ACTIVE"
-                },
-                "column": {
-                    "sort": {
-                        "column_name": "demand_weight",
-                        "sort_by": "DESC"
+        # GraphQL Request Body
+        graphql_payload = {
+            "operationName": "GetListingRows",
+            "variables": {
+                "input": {
+                    "listingRowsInput": {
+                        "internalState": "ACTIVE",
+                        "searchText": "",
+                        "pagination": {
+                            "pageNumber": 0,
+                            "pageSize": LISTING_BATCH_SIZE,
+                        },
+                        "sort": {
+                            "columnName": "demand_weight",
+                            "sortBy": "DESC",
+                        },
                     }
-                },
-                "pagination": {
-                    "batch_no": 0,
-                    "batch_size": LISTING_BATCH_SIZE
                 }
             },
-            {
-                "search_text": "",
-                "search_filters": {
-                    "internal_state": "ACTIVE"
-                }
-            },
-            {
-                "search_text": "",
-                "search_filters": {}
-            }
-        ]
+            "query": GET_LISTING_ROWS_QUERY,
+        }
 
-        # Ensure CSRF token, seller-view-context, and specific Referer are supplied for API #2 POST request
+        # Authentication and GraphQL headers
         csrf_token = (
-            self.api_client.auth_manager.headers.get("FK-CSRF-TOKEN")
+            self.api_client.auth_manager.headers.get("fk-csrf-token")
+            or self.api_client.auth_manager.headers.get("FK-CSRF-TOKEN")
             or self.api_client.auth_manager.cookies.get("XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h")
             or ""
         )
+
         api2_headers = {
-            "Content-Type": "application/json",
+            "accept": "*/*",
+            "content-type": "application/json",
             "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
             "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}",
-            "Accept": "*/*",
-            "seller-view-context": "ALL",
+            "operation": "query",
+            "operation-name": "GetListingRows",
+            "x-internal-env-type": "WEB",
+            "x-marketplace-context": "ALL",
+            "x-requested-with": "XMLHttpRequest",
         }
         if csrf_token:
-            api2_headers["FK-CSRF-TOKEN"] = csrf_token
+            api2_headers["fk-csrf-token"] = csrf_token
 
-        logger.info("API #2 started for customer ID: %s (Requesting up to %d listings)", customer_id, LISTING_BATCH_SIZE)
-        
-        # Print outgoing payload to console in exact sent format
-        import json
+        logger.info("API #2 (GraphQL) started for customer ID: %s (Requesting up to %d listings)", customer_id, LISTING_BATCH_SIZE)
+
+        # Print outgoing request details
         print("\n" + "=" * 70)
-        print(f"[API #2 OUTGOING PAYLOAD] Customer ID: {customer_id}")
-        print(f"URL: {endpoint}")
-        print(f"Payload:\n{json.dumps(payload_candidates[0], indent=2)}")
+        print(f"[API #2 GRAPHQL REQUEST] Customer ID: {customer_id}")
+        print(f"Endpoint: {endpoint}")
+        print(f"Variables:\n{json.dumps(graphql_payload['variables'], indent=2)}")
         print("=" * 70 + "\n")
 
-        response_data = None
-        for p_idx, payload in enumerate(payload_candidates):
-            try:
-                response_data = self.api_client.post(endpoint, json_data=payload, headers=api2_headers)
-                if response_data:
-                    break
-            except Exception as e:
-                logger.debug("API #2 payload variant %d failed for %s: %s", p_idx + 1, customer_id, str(e))
-                if p_idx == len(payload_candidates) - 1:
-                    logger.warning(
-                        "API #2 encountered an error for customer %s (%s). Proceeding with empty listing details.",
-                        customer_id,
-                        str(e)
-                    )
-                    return {
-                        "customer_id": str(customer_id).strip(),
-                        "listings": [],
-                        "listing_titles": [],
-                        "listing_brands": [],
-                        "is_brand": "Possibly a Seller",
-                        "brand_name": "",
-                        "listing_count": 0,
-                    }
+        try:
+            response_data = self.api_client.post(endpoint, json_data=graphql_payload, headers=api2_headers)
+        except Exception as e:
+            logger.warning(
+                "API #2 encountered an error for customer %s (%s). Proceeding with empty listing details.",
+                customer_id,
+                str(e)
+            )
+            return {
+                "customer_id": str(customer_id).strip(),
+                "listings": [],
+                "listing_titles": [],
+                "listing_brands": [],
+                "is_brand": "Possibly a Seller",
+                "brand_name": "",
+                "listing_count": 0,
+            }
 
         raw_listings = self._extract_listings_list(response_data)
         logger.info("API #2 received %d raw listing items for customer ID: %s", len(raw_listings), customer_id)
 
-        # Process up to LISTING_BATCH_SIZE items
         listings: List[Dict[str, str]] = []
         titles: List[str] = []
         brands: List[str] = []
@@ -199,22 +238,33 @@ class API2Scraper:
         for item in raw_listings[:LISTING_BATCH_SIZE]:
             if not isinstance(item, dict):
                 continue
-            title_val = (
-                item.get("title")
-                or item.get("product_title")
-                or item.get("productTitle")
-                or item.get("listing_title")
-                or item.get("listingTitle")
-            )
-            brand_val = (
-                item.get("brand")
-                or item.get("brand_name")
-                or item.get("brandName")
-            )
+
+            # 1. Extract Title
+            title_val = item.get("title")
+            if not title_val and isinstance(item.get("view"), dict):
+                title_val = item["view"].get("clean_title") or item["view"].get("title")
+            if not title_val:
+                title_val = item.get("clean_title") or item.get("product_title") or item.get("productTitle")
 
             title_str = str(title_val).strip() if title_val is not None else ""
+
+            # If title is nested serialized JSON (e.g. {"w3_title": "..."})
+            if title_str.startswith("{") and "w3_title" in title_str:
+                try:
+                    t_obj = json.loads(title_str)
+                    title_str = t_obj.get("w3_title") or t_obj.get("clean_title") or title_str
+                except Exception:
+                    pass
+
             if title_str.lower() in ("null", "none"):
                 title_str = ""
+
+            # 2. Extract Brand
+            brand_val = item.get("brand")
+            if not brand_val and isinstance(item.get("view"), dict):
+                brand_val = item["view"].get("brand")
+            if not brand_val:
+                brand_val = item.get("brand_name") or item.get("brandName")
 
             brand_str = str(brand_val).strip() if brand_val is not None else ""
             if brand_str.lower() in ("null", "none"):
@@ -225,6 +275,7 @@ class API2Scraper:
                 brands.append(brand_str)
                 listings.append({"title": title_str, "brand": brand_str})
 
+        # Apply 12-of-20 brand frequency rule
         is_brand, brand_name = self._evaluate_brand_rule(brands)
         logger.info(
             "API #2 completed for %s: %d titles extracted, Classification: %s (Brand: '%s')",

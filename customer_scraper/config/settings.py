@@ -29,7 +29,7 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 BASE_URL = "https://suv-flipkart.seller-support.fkcloud.it"
 
 API1_ENDPOINT = "/getSellerDetails?sellerId={customer_id}"
-API2_ENDPOINT = "/sellerDashboard/napi/listing/listingsDataForStates?sellerId={customer_id}"
+API2_ENDPOINT = "/sellerDashboard/orchestrator/graphql?sellerId={customer_id}"
 API3_ENDPOINT = "/getSellerContacts?sellerId={customer_id}"
 
 # Scraping & Business Rules
