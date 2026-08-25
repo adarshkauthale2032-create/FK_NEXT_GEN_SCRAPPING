@@ -105,10 +105,9 @@ class API2Scraper:
             Dict containing:
                 customer_id: str
                 listing_titles: List[str]
-                is_brand: "Possibly a Brand" | "Possibly a Seller"
-                brand_name: str
-                listing_count: int
         """
+        endpoint = API2_ENDPOINT.format(customer_id=customer_id)
+
         # Define candidates for API #2 payload based on the live working browser request
         payload_candidates = [
             {
