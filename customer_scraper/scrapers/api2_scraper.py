@@ -156,6 +156,14 @@ class API2Scraper:
 
         logger.info("API #2 started for customer ID: %s (Requesting up to %d listings)", customer_id, LISTING_BATCH_SIZE)
         
+        # Print outgoing payload to console in exact sent format
+        import json
+        print("\n" + "=" * 70)
+        print(f"[API #2 OUTGOING PAYLOAD] Customer ID: {customer_id}")
+        print(f"URL: {endpoint}")
+        print(f"Payload:\n{json.dumps(payload_candidates[0], indent=2)}")
+        print("=" * 70 + "\n")
+
         response_data = None
         for p_idx, payload in enumerate(payload_candidates):
             try:
@@ -216,16 +224,6 @@ class API2Scraper:
                 titles.append(title_str)
                 brands.append(brand_str)
                 listings.append({"title": title_str, "brand": brand_str})
-
-        # Print entire raw JSON response to console for complete visibility
-        import json
-        print("\n" + "=" * 70)
-        print(f"[API #2 RAW RESPONSE] Customer ID: {customer_id}")
-        try:
-            print(json.dumps(response_data, indent=2))
-        except Exception:
-            print(str(response_data))
-        print("=" * 70 + "\n")
 
         is_brand, brand_name = self._evaluate_brand_rule(brands)
         logger.info(
