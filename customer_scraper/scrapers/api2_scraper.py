@@ -207,18 +207,14 @@ class API2Scraper:
                 brands.append(brand_str)
                 listings.append({"title": title_str, "brand": brand_str})
 
-        # Print extracted brand details to console for user reference
+        # Print entire raw JSON response to console for complete visibility
         import json
         print("\n" + "=" * 70)
-        print(f"[API #2 DEBUG] Customer ID: {customer_id}")
-        print(f"[API #2 DEBUG] Total listings returned: {len(raw_listings)} (Extracted: {len(titles)})")
-        for i, lst in enumerate(listings, start=1):
-            print(f"  {i:02d}. Title: '{lst['title']}' | Brand: '{lst['brand']}'")
-        if not listings:
-            print("  (No listings found in response)")
-            # Print sample response keys
-            if isinstance(response_data, dict):
-                print(f"  Response Keys: {list(response_data.keys())}")
+        print(f"[API #2 RAW RESPONSE] Customer ID: {customer_id}")
+        try:
+            print(json.dumps(response_data, indent=2))
+        except Exception:
+            print(str(response_data))
         print("=" * 70 + "\n")
 
         is_brand, brand_name = self._evaluate_brand_rule(brands)
