@@ -190,6 +190,21 @@ class TestExcelWriter(unittest.TestCase):
         self.assertEqual(completed, {"C1", "C2", "C3"})
         self.assertEqual(chunk_writer.get_current_customer_count(), 3)
 
+    def test_corrupted_workbook_auto_recovery(self):
+        # Deliberately corrupt the excel file with garbage bytes
+        self.excel_path.write_bytes(b"CORRUPTED_GARBAGE_BYTES_NOT_ZIP")
+        
+        # Next append should detect corruption, backup corrupt file, reinitialize fresh and succeed
+        cust = {"customer_id": "RECOVERED_ID", "account_name": "Recovered", "support_manager": "Yes"}
+        success = self.writer.append_customer(cust, sr_no=1)
+        self.assertTrue(success)
+
+        # File is now a valid zip / Excel file
+        import zipfile
+        self.assertTrue(zipfile.is_zipfile(self.excel_path))
+        completed = self.writer.get_completed_customer_ids()
+        self.assertIn("RECOVERED_ID", completed)
+
 
 if __name__ == "__main__":
     unittest.main()

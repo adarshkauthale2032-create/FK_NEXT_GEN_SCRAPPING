@@ -24,6 +24,7 @@ if str(BASE_DIR) not in sys.path:
 
 from config.settings import (
     CHUNK_SIZE,
+    DEFAULT_SCRAPE_LIMIT,
     INPUT_FILE_PATH,
     INPUT_SHEET_NAME,
     INPUT_COLUMN_NAME,
@@ -298,7 +299,7 @@ def main():
     parser.add_argument("--import-curl", type=str, help="Import session headers and cookies from a copied cURL command")
     parser.add_argument("--set-cookie", type=str, help="Set cookie string directly")
     parser.add_argument("--chunk-size", type=int, default=CHUNK_SIZE, help=f"Number of sellers per output batch file (default: {CHUNK_SIZE})")
-    parser.add_argument("--limit", type=int, default=None, help="Optional max limit of sellers to scrape across all batches")
+    parser.add_argument("--limit", type=int, default=DEFAULT_SCRAPE_LIMIT, help=f"Number of new seller records to scrape in this session (default: {DEFAULT_SCRAPE_LIMIT})")
     args = parser.parse_args()
 
     # 1. Initialize Components
@@ -385,14 +386,16 @@ def main():
     skipped_count = 0
     failed_count = 0
 
-    logger.info("Total inputs available: %d | Batch chunk size: %d sellers/file", total_ids, chunk_size)
+    logger.info("Total inputs in file: %d", total_ids)
+    logger.info("Already completed sellers (will be skipped): %d", len(progress_tracker.completed_ids))
+    logger.info("Batch file size: %d sellers / file", chunk_size)
     if max_limit:
-        logger.info("Configured global scrape limit: %d sellers", max_limit)
+        logger.info("Target for this session: Scraping next %d new seller records.", max_limit)
 
     try:
         for index, customer_id in enumerate(customer_ids, start=1):
             if max_limit and processed_in_session >= max_limit:
-                logger.info("Reached global target limit of %d scraped sellers. Stopping script.", max_limit)
+                logger.info("🎉 [SESSION COMPLETE] Successfully scraped target of %d sellers in this run. Stopping script cleanly.", max_limit)
                 break
 
             # Check if customer was already completed
@@ -431,7 +434,7 @@ def main():
                         current_sr_no += 1
                         processed_in_session += 1
                         if max_limit and processed_in_session >= max_limit:
-                            logger.info("Reached global target limit of %d scraped sellers. Stopping script.", max_limit)
+                            logger.info("🎉 [SESSION COMPLETE] Successfully scraped target of %d sellers in this run. Stopping script cleanly.", max_limit)
                             break
                     else:
                         logger.error("Failed to persist data for customer ID: %s", customer_id)
@@ -470,7 +473,7 @@ def main():
                     current_sr_no += 1
                     processed_in_session += 1
                     if max_limit and processed_in_session >= max_limit:
-                        logger.info("Reached global target limit of %d scraped sellers. Stopping script.", max_limit)
+                        logger.info("🎉 [SESSION COMPLETE] Successfully scraped target of %d sellers in this run. Stopping script cleanly.", max_limit)
                         break
                 else:
                     logger.error("Failed to persist data for customer ID: %s", customer_id)
