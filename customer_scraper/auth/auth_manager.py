@@ -2,7 +2,7 @@
 Session and Authentication Manager.
 
 Manages HTTP sessions, headers, cookies, token refresh workflows,
-and auth expiry detection without hard-coding sensitive credentials.
+and auth expiry detection with Playwright CDP session recovery.
 """
 
 import json
@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import requests
 
-from config.settings import BASE_URL, BROWSER_PROFILE_DIR, SESSION_CONFIG_PATH
+from config.settings import BASE_URL, REFRESH_INTERVAL, SESSION_CONFIG_PATH
 from auth.playwright_session import PlaywrightSessionHandler
 
 logger = logging.getLogger("customer_scraper")
@@ -27,37 +27,53 @@ class AuthExpiredError(Exception):
 class AuthManager:
     """
     Handles authentication state, cookies, headers, and session lifecycles
-    using Playwright Persistent Context and requests.Session.
+    using requests.Session and Playwright CDP browser session extraction.
     """
 
     def __init__(
         self,
         session_path: Optional[Path] = None,
-        profile_dir: Optional[Path] = None,
         base_url: Optional[str] = None,
+        refresh_interval: int = REFRESH_INTERVAL,
     ):
-        self.session_path = session_path or SESSION_CONFIG_PATH
+        self.session_path = Path(session_path or SESSION_CONFIG_PATH)
+        self.base_url = base_url or BASE_URL
         self.session = requests.Session()
         self.cookies: Dict[str, str] = {}
         self.headers: Dict[str, str] = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/122.0.0.0 Safari/537.36"
+                "Chrome/151.0.0.0 Safari/537.36"
             ),
-            "Accept": "application/json, text/plain, */*",
+            "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive",
+            "Content-Type": "application/json",
+            "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
+            "Referer": "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html",
+            "operation": "query",
+            "operation-name": "GetListingRows",
+            "x-internal-env-type": "WEB",
+            "x-marketplace-context": "ALL",
+            "x-requested-with": "XMLHttpRequest",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "sec-ch-ua": '"Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
         }
         self.playwright_handler = PlaywrightSessionHandler(
-            profile_dir=profile_dir or BROWSER_PROFILE_DIR,
-            base_url=base_url or BASE_URL,
+            session_file=self.session_path,
+            refresh_interval=refresh_interval,
         )
         self.load_session()
 
     def load_session(self) -> bool:
         """
-        Loads cookies and headers from the session configuration file,
-        environment variables, or Playwright persistent browser profile.
+        Loads cookies and headers from the session configuration file.
+        If file is missing, attempts extracting from opened Chrome browser via CDP.
         """
         loaded = False
 
@@ -82,10 +98,12 @@ class AuthManager:
                     if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies and "FK-CSRF-TOKEN" not in self.headers:
                         csrf_val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
                         self.headers["FK-CSRF-TOKEN"] = csrf_val
+                        self.headers["fk-csrf-token"] = csrf_val
                         self.session.headers["FK-CSRF-TOKEN"] = csrf_val
+                        self.session.headers["fk-csrf-token"] = csrf_val
 
                     if loaded:
-                        logger.info("Session configuration successfully loaded from %s", self.session_path.name)
+                        logger.info("Session configuration successfully loaded from %s (%d cookies, %d headers)", self.session_path.name, len(self.cookies), len(self.headers))
             except Exception as e:
                 logger.debug("Failed to read session file (%s): %s", self.session_path, str(e))
 
@@ -97,83 +115,76 @@ class AuthManager:
                 loaded = True
                 logger.info("Session cookies loaded from environment variable FLIPKART_COOKIE")
 
-        # 3. Fallback: Attempt extraction directly from custom/installed Chrome path or DB
-        if not loaded:
-            try:
-                from auth.chrome_session import extract_full_session_from_chrome
-                chrome_session = extract_full_session_from_chrome(save_to_file=False)
-                if chrome_session and chrome_session.get("cookies"):
-                    self.cookies.update(chrome_session["cookies"])
-                    self.session.cookies.update(chrome_session["cookies"])
-                    if chrome_session.get("headers"):
-                        self.headers.update(chrome_session["headers"])
-                        self.session.headers.update(chrome_session["headers"])
-                    loaded = True
-                    logger.info("Loaded %d session cookies directly from Chrome installation/profile.", len(chrome_session["cookies"]))
-                    self._save_to_file()
-            except Exception as e:
-                logger.debug("Chrome custom path auto-extraction notice: %s", str(e))
-
-        # 4. Fallback: Attempt extraction directly from opened CDP browser
-        if not loaded:
-            try:
-                auto_cookies = self.playwright_handler.extract_existing_profile_cookies()
-                if auto_cookies:
-                    self.cookies.update(auto_cookies)
-                    self.session.cookies.update(auto_cookies)
-                    loaded = True
-                    logger.info("Loaded %d session cookies directly from opened browser.", len(auto_cookies))
-                    self._save_to_file()
-            except Exception as e:
-                logger.debug("Opened browser cookie extraction notice: %s", str(e))
-
         return loaded
 
-    def extract_session_from_custom_chrome(self, custom_path: Optional[str] = None) -> bool:
+    def refresh_session(self, seller_id: Optional[str] = None) -> bool:
         """
-        Explicitly triggers extraction from the specified Chrome installation or profile path.
+        Refreshes session when expired by:
+        1. Connecting to Chrome via CDP.
+        2. Refreshing the dynamic Flipkart page (https://suv-flipkart.seller-support.fkcloud.it/#app/seller/{seller_id}/info).
+        3. Intercepting automatic API requests for headers (including FK-CSRF-TOKEN) and extracting cookies.
+        4. Updating session.json and internal requests session.
         """
-        from auth.chrome_session import extract_full_session_from_chrome
-        session_data = extract_full_session_from_chrome(custom_path=custom_path, save_to_file=True)
-        if session_data and session_data.get("cookies"):
-            self.cookies.update(session_data["cookies"])
-            self.session.cookies.update(session_data["cookies"])
-            if session_data.get("headers"):
-                self.headers.update(session_data["headers"])
-                self.session.headers.update(session_data["headers"])
-            logger.info("Successfully extracted session from Chrome (%s).", custom_path or "default")
-            return True
-        return False
+        logger.info("[AUTH] Session expired. Initiating browser refresh & session re-extraction (Seller ID: %s)...", seller_id or "default")
 
-    def login_with_playwright(self, force_login_prompt: bool = False) -> bool:
-        """
-        Extracts session credentials directly from the opened browser.
-        If browser is not open, launches it and keeps it open without closing.
-        """
-        logger.info("Extracting session from opened browser...")
         try:
-            session_data = self.playwright_handler.get_or_prompt_session(force_login_prompt=force_login_prompt)
-            new_cookies = session_data.get("cookies", {})
-            new_headers = session_data.get("headers", {})
+            session_data = self.playwright_handler.refresh_and_extract_session(seller_id=seller_id)
+            if session_data:
+                new_cookies = session_data.get("cookies", {})
+                new_headers = session_data.get("headers", {})
 
-            if new_cookies:
-                self.cookies.update(new_cookies)
-                self.session.cookies.update(new_cookies)
+                if new_cookies:
+                    self.cookies.update(new_cookies)
+                    self.session.cookies.update(new_cookies)
 
-            if new_headers:
-                self.headers.update(new_headers)
-                self.session.headers.update(new_headers)
+                if new_headers:
+                    self.headers.update(new_headers)
+                    self.session.headers.update(new_headers)
 
-            if self.cookies:
-                self._save_to_file()
-                logger.info("Session successfully captured from opened browser and persisted.")
+                # Ensure CSRF token header
+                if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies and "FK-CSRF-TOKEN" not in self.headers:
+                    csrf_val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
+                    self.headers["FK-CSRF-TOKEN"] = csrf_val
+                    self.headers["fk-csrf-token"] = csrf_val
+                    self.session.headers["FK-CSRF-TOKEN"] = csrf_val
+                    self.session.headers["fk-csrf-token"] = csrf_val
+
+                logger.info("[AUTH] Session successfully refreshed and updated in memory.")
                 return True
-            else:
-                logger.warning("No cookies were captured from the opened browser.")
-                return False
         except Exception as e:
-            logger.error("Session capture from opened browser failed: %s", str(e))
-            raise
+            logger.error("[AUTH] CDP session refresh failed: %s", str(e))
+
+        # Fallback: interactive manual entry if terminal available
+        if sys.stdin.isatty():
+            print("\n" + "=" * 65)
+            print("  AUTHENTICATION FALLBACK:")
+            print("  Paste updated 'Cookie' header string below (or Press Enter to abort):")
+            print("=" * 65)
+            try:
+                user_input = input("Cookie Header: ").strip()
+                if user_input:
+                    self.set_cookie_string(user_input)
+                    self._save_to_file()
+                    logger.info("Session updated from manual cookie input.")
+                    return True
+            except (EOFError, KeyboardInterrupt):
+                raise AuthExpiredError("User aborted session authentication prompt.")
+
+        raise AuthExpiredError(
+            f"Authentication failed. Please ensure Chrome is open with debugging port (http://127.0.0.1:9222) and you are logged into Flipkart, then update {self.session_path}."
+        )
+
+    def start_keepalive_refresher(self, seller_id: Optional[str] = None) -> None:
+        """
+        Starts the background 10-minute tab refresh loop.
+        """
+        self.playwright_handler.start_keepalive_thread(seller_id=seller_id)
+
+    def stop_keepalive_refresher(self) -> None:
+        """
+        Stops the background 10-minute tab refresh loop.
+        """
+        self.playwright_handler.stop_keepalive_thread()
 
     def _save_to_file(self) -> None:
         """Saves current cookies and headers to session.json."""
@@ -181,7 +192,7 @@ class AuthManager:
             data = {"cookies": self.cookies, "headers": self.headers}
             self.session_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.session_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+                json.dump(data, f, indent=4, ensure_ascii=False)
             logger.info("Saved active session configuration to %s", self.session_path.name)
         except Exception as e:
             logger.error("Failed to save session configuration: %s", str(e))
@@ -203,9 +214,7 @@ class AuthManager:
         return False
 
     def set_cookie_string(self, cookie_string: str) -> None:
-        """
-        Parses a standard Cookie header string into the session.
-        """
+        """Parses a standard Cookie header string into the session."""
         cookies_dict = {}
         for item in cookie_string.split(";"):
             if "=" in item:
@@ -215,16 +224,12 @@ class AuthManager:
         self.session.cookies.update(cookies_dict)
 
     def set_headers(self, headers_dict: Dict[str, str]) -> None:
-        """
-        Updates session headers.
-        """
+        """Updates session headers."""
         self.headers.update(headers_dict)
         self.session.headers.update(headers_dict)
 
     def get_session(self) -> requests.Session:
-        """
-        Returns the active, configured requests Session.
-        """
+        """Returns the active, configured requests Session."""
         return self.session
 
     def is_session_expired(self, response: requests.Response) -> bool:
@@ -269,37 +274,3 @@ class AuthManager:
                 pass
 
         return False
-
-    def refresh_session(self) -> bool:
-        """
-        Attempts to reload and re-establish the session from the opened browser.
-        """
-        logger.info("Session expired or invalid. Re-authenticating from opened browser...")
-
-        try:
-            success = self.login_with_playwright(force_login_prompt=True)
-            if success:
-                logger.info("Session successfully refreshed from opened browser.")
-                return True
-        except Exception as e:
-            logger.error("Session refresh from opened browser failed: %s", str(e))
-
-        # Fallback: offer manual cookie entry if running interactively
-        if sys.stdin.isatty():
-            print("\n" + "=" * 60)
-            print("AUTHENTICATION FALLBACK:")
-            print("Paste updated 'Cookie' header string below (or Press Enter to abort):")
-            print("=" * 60)
-            try:
-                user_input = input("Cookie Header: ").strip()
-                if user_input:
-                    self.set_cookie_string(user_input)
-                    self._save_to_file()
-                    logger.info("Session updated from manual cookie input.")
-                    return True
-            except (EOFError, KeyboardInterrupt):
-                raise AuthExpiredError("User aborted session authentication prompt.")
-
-        raise AuthExpiredError(
-            f"Authentication failed. Please launch with Playwright to authenticate or update {self.session_path} and restart."
-        )

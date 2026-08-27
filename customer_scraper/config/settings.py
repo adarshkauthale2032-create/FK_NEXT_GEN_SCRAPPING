@@ -14,20 +14,13 @@ CONFIG_DIR = BASE_DIR / "config"
 
 # File Paths
 INPUT_FILE_PATH = INPUT_DIR / "customer_id_input.txt"
-OUTPUT_EXCEL_PATH = OUTPUT_DIR / "scraped_data.xlsx"
+OUTPUT_CSV_PATH = OUTPUT_DIR / "scraped_data.csv"
+OUTPUT_EXCEL_PATH = OUTPUT_CSV_PATH  # Backward compatibility alias
 PROGRESS_FILE_PATH = OUTPUT_DIR / "progress.json"
 PENDING_FILE_PATH = OUTPUT_DIR / "pending_results.json"
 LOG_FILE_PATH = LOGS_DIR / "scraper.log"
 SESSION_CONFIG_PATH = CONFIG_DIR / "session.json"
 BROWSER_PROFILE_DIR = BASE_DIR / "browser_profile"
-
-# Custom Chrome / Browser Path Configuration
-# If your Chrome is installed in a custom location, replace "Enter_YOUR_PATH" with your actual path.
-# Supported formats:
-#   1. Chrome executable: r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-#   2. Chrome installation folder: r"C:\Program Files\Google\Chrome\Application"
-#   3. Chrome User Data / Profile folder: r"C:\Users\<YourUser>\AppData\Local\Google\Chrome\User Data"
-CHROME_INSTALLED_PATH = "Enter_YOUR_PATH"
 
 # Ensure runtime directories exist
 INPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -35,14 +28,23 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
-# API Configuration
+# API & Browser CDP Configuration
 BASE_URL = "https://suv-flipkart.seller-support.fkcloud.it"
 CDP_PORT = 9222
 CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
 
+# Browser Tab Keep-Alive Refresh Interval (10 minutes = 600 seconds)
+REFRESH_INTERVAL = 600
+
+# Dynamic Portal URLs
+SELLER_INFO_URL = "https://suv-flipkart.seller-support.fkcloud.it/#app/seller/{seller_id}/info"
+SELLER_APPROVALS_URL = "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={seller_id}#dashboard/listings/trackApprovalRequestsV2?requestState=APPROVED"
+
+# API Endpoints
 API1_ENDPOINT = "/getSellerDetails?sellerId={customer_id}"
 API2_ENDPOINT = "/sellerDashboard/orchestrator/graphql?sellerId={customer_id}"
 API3_ENDPOINT = "/getSellerContacts?sellerId={customer_id}"
+API_APPROVALS_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2?sellerId={customer_id}"
 
 # Scraping & Business Rules
 BRAND_THRESHOLD = 12  # Must be strictly > 12 to be considered "Possibly a Brand"
@@ -56,12 +58,12 @@ MAX_REQUEST_RETRIES = 3  # retry attempts for transient network/API errors
 BACKOFF_FACTOR = 2  # exponential backoff multiplier in seconds
 MAX_AUTH_RETRIES = 2  # retry attempts after session refresh
 
-# Excel Lock & Retry Settings
-EXCEL_RETRY_INTERVAL = 3  # seconds between retries when file is locked
-MAX_EXCEL_LOCK_RETRIES = 60  # total retries before pausing/raising (approx 3 minutes)
+# CSV / File Lock & Retry Settings
+CSV_RETRY_INTERVAL = 3  # seconds between retries when file is locked
+MAX_CSV_LOCK_RETRIES = 60  # total retries before pausing/raising (approx 3 minutes)
 
-# Excel Column Definitions (Preserving strict order)
-EXCEL_COLUMNS = [
+# CSV Column Definitions (Preserving strict order)
+CSV_COLUMNS = [
     "Sr No",
     "Customer ID",
     "Account Name",
@@ -78,3 +80,4 @@ EXCEL_COLUMNS = [
     "Email ID",
     "Registered Email ID",
 ]
+EXCEL_COLUMNS = CSV_COLUMNS  # Backward compatibility alias

@@ -1,7 +1,8 @@
 """
-Integration tests for complete scraping workflow, resume capability, and state tracking.
+Integration tests for complete scraping workflow, resume capability, and state tracking with CSV.
 """
 
+import csv
 import json
 import shutil
 import tempfile
@@ -10,7 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from api.api_client import APIClient
-from excel.excel_writer import ExcelWriter
+from excel.excel_writer import CSVWriter
 from main import ProgressTracker, read_customer_ids
 from scrapers.api1_scraper import API1Scraper
 from scrapers.api2_scraper import API2Scraper
@@ -21,7 +22,7 @@ class TestIntegrationScraperFlow(unittest.TestCase):
     def setUp(self):
         self.test_dir = Path(tempfile.mkdtemp())
         self.input_file = self.test_dir / "input.txt"
-        self.excel_file = self.test_dir / "scraped_data.xlsx"
+        self.csv_file = self.test_dir / "scraped_data.csv"
         self.progress_file = self.test_dir / "progress.json"
         self.pending_file = self.test_dir / "pending.json"
 
@@ -32,7 +33,7 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.api1 = API1Scraper(self.mock_client)
         self.api2 = API2Scraper(self.mock_client)
         self.api3 = API3Scraper(self.mock_client)
-        self.excel_writer = ExcelWriter(excel_path=self.excel_file, pending_path=self.pending_file)
+        self.csv_writer = CSVWriter(csv_path=self.csv_file, pending_path=self.pending_file)
         self.tracker = ProgressTracker(progress_path=self.progress_file)
 
     def tearDown(self):
@@ -58,7 +59,7 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.assertEqual(api1_data["support_manager"], "Yes")
 
         # In main workflow, when Yes: save and mark completed without calling api2/api3
-        saved = self.excel_writer.append_customer(api1_data, sr_no=1)
+        saved = self.csv_writer.append_customer(api1_data, sr_no=1)
         self.assertTrue(saved)
         self.tracker.mark_completed(customer_id)
 
@@ -139,17 +140,17 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.assertEqual(res3["email_id"], "unman@mail.com")
 
         combined = {**res1, **res2, **res3}
-        saved = self.excel_writer.append_customer(combined, sr_no=1)
+        saved = self.csv_writer.append_customer(combined, sr_no=1)
         self.assertTrue(saved)
         self.tracker.mark_completed(cust_id)
 
-        # Verify Excel output has 20 listing rows + header = 21 rows
-        import openpyxl
-        wb = openpyxl.load_workbook(self.excel_file)
-        ws = wb.active
-        self.assertEqual(ws.max_row, 21)
-        self.assertEqual(ws.cell(row=2, column=8).value, "Shoe 0")
-        self.assertEqual(ws.cell(row=21, column=8).value, "Socks 4")
+        # Verify CSV output has 20 listing rows + header = 21 rows
+        with open(self.csv_file, "r", encoding="utf-8-sig") as f:
+            rows = list(csv.reader(f))
+
+        self.assertEqual(len(rows), 21)
+        self.assertEqual(rows[1][7], "Shoe 0")
+        self.assertEqual(rows[20][7], "Socks 4")
 
 
 if __name__ == "__main__":

@@ -1,270 +1,476 @@
 """
-Playwright Persistent Context & Opened Browser Session Manager.
+Playwright CDP Session Handler for Flipkart Seller Support.
 
-Connects directly to an already-opened browser instance via CDP (Chrome DevTools Protocol),
-or launches a persistent browser window with remote debugging enabled.
-Extracts active cookies, local storage, and headers directly from the opened browser
-WITHOUT closing the browser window, allowing continuous reuse and zero re-logins.
+Features:
+1. Connects to running Chrome via Chrome DevTools Protocol (CDP: http://127.0.0.1:9222).
+2. Dynamic page navigation & reload (e.g. /#app/seller/{seller_id}/info).
+3. Session capture on expiry: captures cookies and request headers (including FK-CSRF-TOKEN,
+   connect.sid, XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h) from automatic API triggers and saves to session.json.
+4. Keep-Alive loop: reloads Flipkart tab every 10 minutes without overwriting session.json.
 """
 
+import asyncio
 import json
 import logging
 import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 import urllib.request
 
-from config.settings import BASE_URL, BROWSER_PROFILE_DIR, CDP_PORT, CDP_URL
+from config.settings import (
+    BASE_URL,
+    CDP_PORT,
+    CDP_URL,
+    REFRESH_INTERVAL,
+    SELLER_APPROVALS_URL,
+    SELLER_INFO_URL,
+    SESSION_CONFIG_PATH,
+)
 
 logger = logging.getLogger("customer_scraper")
 
+DEFAULT_FALLBACK_SELLER_ID = "218598a2b41c4bcd"
 
-def is_browser_running_on_cdp(cdp_url: str = CDP_URL) -> bool:
-    """
-    Checks if a browser instance is actively running and accessible on the CDP port.
-    """
+
+def is_cdp_available(cdp_url: str = CDP_URL) -> bool:
+    """Checks whether Chrome is actively listening on the CDP debugging port."""
     try:
-        req = urllib.request.Request(f"{cdp_url}/json/version", headers={"User-Agent": "CustomerScraper"})
+        req = urllib.request.Request(
+            f"{cdp_url}/json/version",
+            headers={"User-Agent": "FlipkartSessionHandler"},
+        )
         with urllib.request.urlopen(req, timeout=1.5) as resp:
             return resp.status == 200
     except Exception:
         return False
 
 
-def find_browser_executable(custom_path: Optional[Union[str, Path]] = None) -> Optional[str]:
-    """
-    Finds the Chrome or Chromium executable on the Windows system, checking
-    custom settings, environment variables, or standard locations.
-    """
-    from auth.chrome_session import resolve_chrome_paths
-    resolved = resolve_chrome_paths(custom_path)
-    if resolved.get("executable") and resolved["executable"].is_file():
-        return str(resolved["executable"])
-
-    # Fallback check common Google Chrome paths on Windows
-    program_files = os.environ.get("PROGRAMFILES", r"C:\Program Files")
-    program_files_x86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
-    local_app_data = os.environ.get("LOCALAPPDATA", "")
-
-    potential_paths = [
-        Path(program_files) / "Google" / "Chrome" / "Application" / "chrome.exe",
-        Path(program_files_x86) / "Google" / "Chrome" / "Application" / "chrome.exe",
-        Path(local_app_data) / "Google" / "Chrome" / "Application" / "chrome.exe" if local_app_data else None,
-        Path(program_files) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-        Path(program_files_x86) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-    ]
-
-    for p in potential_paths:
-        if p and p.exists():
-            return str(p)
-
-    return None
+def get_default_headers() -> Dict[str, str]:
+    """Returns baseline default headers matching Flipkart portal requests."""
+    return {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/151.0.0.0 Safari/537.36"
+        ),
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive",
+        "Content-Type": "application/json",
+        "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
+        "Referer": "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html",
+        "operation": "query",
+        "operation-name": "GetListingRows",
+        "x-internal-env-type": "WEB",
+        "x-marketplace-context": "ALL",
+        "x-requested-with": "XMLHttpRequest",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "sec-ch-ua": '"Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+    }
 
 
 class PlaywrightSessionHandler:
     """
-    Handles session extraction from an opened browser via CDP or Persistent Context,
-    ensuring the browser remains open and alive across scraper runs.
+    Manages Playwright CDP interaction, 10-minute keepalive tab refresh,
+    and automatic session cookie/header extraction upon expiration.
     """
 
     def __init__(
         self,
-        profile_dir: Optional[Path] = None,
-        base_url: Optional[str] = None,
-        cdp_port: int = CDP_PORT,
-        custom_chrome_path: Optional[Union[str, Path]] = None,
+        cdp_url: str = CDP_URL,
+        session_file: Optional[Path] = None,
+        refresh_interval: int = REFRESH_INTERVAL,
     ):
-        self.custom_chrome_path = custom_chrome_path
-        self.profile_dir = Path(profile_dir or BROWSER_PROFILE_DIR)
-        self.base_url = base_url or BASE_URL
-        self.cdp_port = cdp_port
-        self.cdp_url = f"http://127.0.0.1:{self.cdp_port}"
-        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        self.cdp_url = cdp_url
+        self.session_file = Path(session_file or SESSION_CONFIG_PATH)
+        self.refresh_interval = refresh_interval
+        self._keepalive_thread: Optional[threading.Thread] = None
+        self._stop_keepalive = threading.Event()
 
     def is_browser_open(self) -> bool:
-        """Returns True if a browser is currently running and listening on the CDP port."""
-        return is_browser_running_on_cdp(self.cdp_url)
+        """Returns True if Chrome is reachable via CDP."""
+        return is_cdp_available(self.cdp_url)
 
-    def extract_session_from_opened_browser(self) -> Optional[Dict[str, Any]]:
+    def launch_chrome_if_needed(self, initial_url: Optional[str] = None) -> bool:
         """
-        Connects to the already-opened browser over CDP, reads active cookies
-        and headers, and disconnects WITHOUT closing the browser window.
+        If Chrome is not currently open with CDP, launches Chrome with --remote-debugging-port.
         """
-        if not self.is_browser_open():
-            return None
+        if self.is_browser_open():
+            return True
 
+        target_url = initial_url or SELLER_INFO_URL.format(seller_id=DEFAULT_FALLBACK_SELLER_ID)
+        logger.info("Chrome CDP not detected on %s. Attempting to launch Chrome...", self.cdp_url)
+
+        # Standard Chrome launch commands
+        launch_cmds = [
+            [
+                "chrome.exe",
+                f"--remote-debugging-port={CDP_PORT}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--start-maximized",
+                target_url,
+            ],
+            [
+                "chrome",
+                f"--remote-debugging-port={CDP_PORT}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--start-maximized",
+                target_url,
+            ],
+        ]
+
+        for cmd in launch_cmds:
+            try:
+                if sys.platform == "win32":
+                    subprocess.Popen(
+                        cmd,
+                        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                    )
+                else:
+                    subprocess.Popen(cmd, start_new_session=True)
+                break
+            except Exception as e:
+                logger.debug("Failed to launch Chrome with %s: %s", cmd[0], str(e))
+
+        # Wait up to 10 seconds for CDP endpoint to respond
+        for _ in range(20):
+            time.sleep(0.5)
+            if self.is_browser_open():
+                logger.info("Chrome successfully launched and listening on CDP %s", self.cdp_url)
+                return True
+
+        return False
+
+    async def _async_refresh_and_extract_session(
+        self,
+        seller_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Connects over CDP, refreshes the dynamic seller page, intercepts
+        network requests for API headers, extracts cookies, and updates session.json.
+        """
         try:
-            from playwright.sync_api import sync_playwright
+            from playwright.async_api import async_playwright
         except ImportError:
             logger.error("Playwright is not installed. Please run: pip install playwright")
             return None
 
-        extracted_cookies: Dict[str, str] = {}
-        extracted_headers: Dict[str, str] = {
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Origin": self.base_url,
-            "Referer": f"{self.base_url}/",
-        }
+        active_seller_id = str(seller_id).strip() if seller_id else DEFAULT_FALLBACK_SELLER_ID
+        target_info_url = SELLER_INFO_URL.format(seller_id=active_seller_id)
+        target_approvals_url = SELLER_APPROVALS_URL.format(seller_id=active_seller_id)
 
+        captured_headers: Dict[str, str] = get_default_headers()
+        captured_cookies: Dict[str, str] = {}
+        csrf_token_found: Optional[str] = None
+
+        logger.info("[SESSION] Connecting to Chrome over CDP (%s)...", self.cdp_url)
+
+        async with async_playwright() as p:
+            try:
+                browser = await p.chromium.connect_over_cdp(self.cdp_url)
+            except Exception as e:
+                logger.error("[SESSION] Could not connect to Chrome CDP (%s): %s", self.cdp_url, str(e))
+                return None
+
+            if not browser.contexts:
+                logger.error("[SESSION] No browser contexts found in Chrome instance.")
+                return None
+
+            context = browser.contexts[0]
+
+            # ------------------------------------------------------------
+            # Setup Request Interception to Capture API Headers & CSRF Tokens
+            # ------------------------------------------------------------
+            async def handle_request(request):
+                nonlocal csrf_token_found
+                try:
+                    url = request.url
+                    # Intercept relevant Flipkart seller API requests
+                    if any(key in url for key in (
+                        "getSellerDetails",
+                        "approval-store",
+                        "requestsV2",
+                        "orchestrator",
+                        "graphql",
+                        "sellerDashboard",
+                        "seller-support.fkcloud.it",
+                    )):
+                        req_headers = await request.all_headers()
+
+                        # Extract CSRF token
+                        for header_k, header_v in req_headers.items():
+                            if header_k.lower() == "fk-csrf-token":
+                                csrf_token_found = header_v
+                                captured_headers["FK-CSRF-TOKEN"] = header_v
+                                captured_headers["fk-csrf-token"] = header_v
+                            elif header_k.lower() in (
+                                "user-agent",
+                                "sec-ch-ua",
+                                "sec-ch-ua-mobile",
+                                "sec-ch-ua-platform",
+                                "origin",
+                                "referer",
+                                "x-requested-with",
+                                "x-internal-env-type",
+                                "x-marketplace-context",
+                            ):
+                                captured_headers[header_k] = header_v
+
+                except Exception as ex:
+                    logger.debug("[SESSION] Request intercept handler notice: %s", str(ex))
+
+            context.on("request", handle_request)
+
+            # ------------------------------------------------------------
+            # Find Existing Flipkart Tab or Create One
+            # ------------------------------------------------------------
+            target_page = None
+            for page in context.pages:
+                try:
+                    p_url = page.url
+                    if "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
+                        target_page = page
+                        logger.info("[SESSION] Found existing Flipkart tab: %s", p_url)
+                        break
+                except Exception:
+                    pass
+
+            if target_page is None:
+                logger.info("[SESSION] Flipkart tab not found. Opening new page: %s", target_info_url)
+                target_page = await context.new_page()
+                await target_page.goto(target_info_url, wait_until="domcontentloaded")
+                await asyncio.sleep(2)
+            else:
+                # First refresh the page as requested
+                logger.info("[SESSION] Refreshing Flipkart page: %s", target_info_url)
+                try:
+                    # Navigate to dynamic seller info URL if current URL differs
+                    if active_seller_id not in target_page.url:
+                        await target_page.goto(target_info_url, wait_until="domcontentloaded")
+                    else:
+                        await target_page.reload(wait_until="domcontentloaded")
+                except Exception as nav_err:
+                    logger.warning("[SESSION] Page reload error: %s. Retrying goto...", str(nav_err))
+                    await target_page.goto(target_info_url, wait_until="domcontentloaded")
+
+                # Wait for automatic API calls to trigger
+                await asyncio.sleep(2.5)
+
+            # ------------------------------------------------------------
+            # Extract All Cookies for fkcloud.it domain
+            # ------------------------------------------------------------
+            browser_cookies = await context.cookies(
+                ["https://suv-flipkart.seller-support.fkcloud.it", "https://fkcloud.it"]
+            )
+
+            for c in browser_cookies:
+                c_name = c.get("name")
+                c_val = c.get("value")
+                if c_name and c_val is not None:
+                    captured_cookies[c_name] = c_val
+
+            # If CSRF token is in cookies (XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h), ensure header is updated
+            if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in captured_cookies:
+                csrf_val = captured_cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
+                captured_headers["FK-CSRF-TOKEN"] = csrf_val
+                captured_headers["fk-csrf-token"] = csrf_val
+
+            # Read user-agent from page evaluation if not intercepted
+            if target_page:
+                try:
+                    ua = await target_page.evaluate("() => navigator.userAgent")
+                    if ua:
+                        captured_headers["User-Agent"] = ua
+                except Exception:
+                    pass
+
+        # ------------------------------------------------------------
+        # Save to session.json in identical schema
+        # ------------------------------------------------------------
+        if captured_cookies:
+            # Preserve existing session values if new capture missed any
+            existing_session = self.read_current_session_file()
+            existing_cookies = existing_session.get("cookies", {})
+            existing_headers = existing_session.get("headers", {})
+
+            merged_cookies = {**existing_cookies, **captured_cookies}
+            merged_headers = {**existing_headers, **captured_headers}
+
+            session_data = {
+                "cookies": merged_cookies,
+                "headers": merged_headers,
+            }
+
+            self.session_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.session_file, "w", encoding="utf-8") as f:
+                json.dump(session_data, f, indent=4, ensure_ascii=False)
+
+            print()
+            print("=" * 70)
+            print("[SESSION] session.json CREATED / UPDATED")
+            print(f"[SESSION] File:    {self.session_file.resolve()}")
+            print(f"[SESSION] Seller:  {active_seller_id}")
+            print(f"[SESSION] Cookies: {len(merged_cookies)} captured")
+            print(f"[SESSION] Headers: {len(merged_headers)} captured")
+            if "connect.sid" in merged_cookies:
+                print(f"[SESSION] connect.sid: {merged_cookies['connect.sid'][:25]}...")
+            if "FK-CSRF-TOKEN" in merged_headers:
+                print(f"[SESSION] CSRF Token:  {merged_headers['FK-CSRF-TOKEN']}")
+            print("=" * 70)
+            print()
+
+            return session_data
+        else:
+            logger.warning("[SESSION] No cookies were extracted from Chrome context.")
+            return None
+
+    def read_current_session_file(self) -> Dict[str, Any]:
+        """Safely reads the current session.json file if present."""
+        if self.session_file.exists():
+            try:
+                with open(self.session_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.debug("Failed to read %s: %s", self.session_file, str(e))
+        return {"cookies": {}, "headers": {}}
+
+    def refresh_and_extract_session(self, seller_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Synchronous entry point to refresh Flipkart browser page and extract updated session.
+        """
+        if not self.is_browser_open():
+            launched = self.launch_chrome_if_needed(
+                initial_url=SELLER_INFO_URL.format(seller_id=seller_id or DEFAULT_FALLBACK_SELLER_ID)
+            )
+            if not launched:
+                logger.error("Chrome is not running on port %d and could not be started.", CDP_PORT)
+                return None
+
+        return asyncio.run(self._async_refresh_and_extract_session(seller_id=seller_id))
+
+    async def _async_keepalive_loop(self, seller_id: Optional[str] = None):
+        """
+        Background keepalive loop: refreshes the Flipkart tab every 10 minutes (600s)
+        WITHOUT extracting or updating session.json.
+        """
         try:
-            with sync_playwright() as p:
-                logger.info("Connecting to already opened browser at %s via CDP...", self.cdp_url)
-                browser = p.chromium.connect_over_cdp(self.cdp_url)
+            from playwright.async_api import async_playwright
+        except ImportError:
+            logger.error("Playwright is not installed.")
+            return
 
-                # Iterate through all browser contexts
-                for context in browser.contexts:
-                    # Extract cookies from context
-                    for c in context.cookies():
-                        name = c.get("name")
-                        val = c.get("value")
-                        if name and val is not None:
-                            extracted_cookies[name] = val
+        active_seller_id = str(seller_id).strip() if seller_id else DEFAULT_FALLBACK_SELLER_ID
+        target_url = SELLER_INFO_URL.format(seller_id=active_seller_id)
 
-                    # Check open pages for user agent or CSRF tokens
+        print()
+        print("=" * 70)
+        print("[KEEPALIVE] Flipkart Browser Tab Keep-Alive Monitor Started")
+        print(f"[KEEPALIVE] Target Portal:    {target_url}")
+        print(f"[KEEPALIVE] Refresh Interval: {self.refresh_interval} seconds (10 minutes)")
+        print("[KEEPALIVE] Note: Only reloads page; does not overwrite session.json")
+        print("=" * 70)
+        print()
+
+        async with async_playwright() as p:
+            while not self._stop_keepalive.is_set():
+                try:
+                    if not is_cdp_available(self.cdp_url):
+                        logger.debug("[KEEPALIVE] Chrome CDP not available. Waiting...")
+                        await asyncio.sleep(10)
+                        continue
+
+                    browser = await p.chromium.connect_over_cdp(self.cdp_url)
+                    if not browser.contexts:
+                        await asyncio.sleep(10)
+                        continue
+
+                    context = browser.contexts[0]
+                    target_page = None
+
                     for page in context.pages:
                         try:
-                            page_url = page.url
-                            if "seller-support.fkcloud.it" in page_url or "suv-flipkart" in page_url:
-                                ua = page.evaluate("() => navigator.userAgent")
-                                if ua:
-                                    extracted_headers["User-Agent"] = ua
+                            if "seller-support.fkcloud.it" in page.url or "fkcloud.it" in page.url:
+                                target_page = page
+                                break
                         except Exception:
                             pass
 
-                # Extract CSRF token if present
-                if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in extracted_cookies:
-                    extracted_headers["FK-CSRF-TOKEN"] = extracted_cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
+                    if target_page is None or target_page.is_closed():
+                        logger.info("[KEEPALIVE] Opening Flipkart tab at %s...", target_url)
+                        target_page = await context.new_page()
+                        await target_page.goto(target_url, wait_until="domcontentloaded")
+                    else:
+                        logger.info("[KEEPALIVE] Periodic 10-minute refresh: %s", target_page.url)
+                        await target_page.reload(wait_until="domcontentloaded")
 
-                # Note: We do NOT call browser.close() or context.close()!
-                # Exiting the sync_playwright context simply disconnects the CDP client.
-                # The user's opened browser window remains running and completely open.
+                    # Disconnect CDP client cleanly without closing user browser
+                    # Wait for next refresh interval (e.g. 600s), checking stop flag periodically
+                    for _ in range(int(self.refresh_interval / 5)):
+                        if self._stop_keepalive.is_set():
+                            break
+                        await asyncio.sleep(5)
 
-        except Exception as e:
-            logger.debug("Could not extract session from running CDP browser: %s", str(e))
-            return None
+                except Exception as e:
+                    logger.debug("[KEEPALIVE] Refresh loop exception: %s", str(e))
+                    await asyncio.sleep(10)
 
-        if extracted_cookies:
-            logger.info(
-                "Successfully extracted %d cookies directly from opened browser.",
-                len(extracted_cookies),
-            )
-            return {
-                "cookies": extracted_cookies,
-                "headers": extracted_headers,
-            }
-
-        return None
-
-    def launch_browser_and_keep_open(self) -> None:
+    def start_keepalive_thread(self, seller_id: Optional[str] = None) -> None:
         """
-        Launches the browser with the persistent profile and remote debugging enabled
-        in an independent, detached background process so it stays open indefinitely.
+        Starts the 10-minute keep-alive tab refresh loop in a background daemon thread.
         """
-        if self.is_browser_open():
-            logger.info("Browser is already running on port %d.", self.cdp_port)
+        if self._keepalive_thread and self._keepalive_thread.is_alive():
+            logger.debug("Keepalive thread is already running.")
             return
 
-        browser_exe = find_browser_executable(self.custom_chrome_path)
-        if not browser_exe:
-            # Fallback to python playwright CLI or default
-            browser_exe = "chrome"
+        self._stop_keepalive.clear()
 
-        cmd = [
-            browser_exe,
-            f"--remote-debugging-port={self.cdp_port}",
-            f"--user-data-dir={str(self.profile_dir)}",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--start-maximized",
-            self.base_url,
-        ]
+        def _runner():
+            asyncio.run(self._async_keepalive_loop(seller_id=seller_id))
 
-        logger.info("Launching persistent browser: %s", " ".join(cmd[:3]))
-        try:
-            # Spawn detached process so it never closes when scraper finishes
-            if sys.platform == "win32":
-                subprocess.Popen(cmd, creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
-            else:
-                subprocess.Popen(cmd, start_new_session=True)
-            
-            # Wait for CDP endpoint to become ready
-            for _ in range(15):
-                time.sleep(0.5)
-                if self.is_browser_open():
-                    logger.info("Browser is now ready on CDP port %d.", self.cdp_port)
-                    return
-        except Exception as e:
-            logger.error("Failed to launch detached browser process: %s", str(e))
+        self._keepalive_thread = threading.Thread(
+            target=_runner,
+            name="FlipkartKeepAliveThread",
+            daemon=True,
+        )
+        self._keepalive_thread.start()
+        logger.info("Started background 10-minute Flipkart browser keepalive refresher.")
 
-    def get_or_prompt_session(self, force_login_prompt: bool = False) -> Dict[str, Any]:
-        """
-        Gets the session directly from the opened browser.
-        If the browser is not running, launches it and keeps it open.
-        Prompts the user to log in if cookies are missing or if force_login_prompt is True.
-        """
-        # Step 1: Check if already open and has valid session cookies
-        if not force_login_prompt and self.is_browser_open():
-            session = self.extract_session_from_opened_browser()
-            if session and session.get("cookies"):
-                return session
+    def stop_keepalive_thread(self) -> None:
+        """Stops the background keepalive thread."""
+        self._stop_keepalive.set()
+        if self._keepalive_thread and self._keepalive_thread.is_alive():
+            self._keepalive_thread.join(timeout=2.0)
+            logger.info("Stopped background Flipkart browser keepalive refresher.")
 
-        # Step 2: Ensure browser is launched and kept open
-        if not self.is_browser_open():
-            self.launch_browser_and_keep_open()
 
-        # Step 3: Prompt user in terminal to complete login in the opened browser
-        print("\n" + "=" * 72)
-        print("  SESSION REQUIRED - USE OPENED BROWSER")
-        print("=" * 72)
-        print(f"  Target Portal: {self.base_url}")
-        print("  1. The browser window is OPEN (it will remain open).")
-        print("  2. Please log in to Flipkart Seller Support in the opened window.")
-        print("  3. Complete any required 2FA, OTP, or SSO verification.")
-        print("  4. Once you are logged in and see the dashboard:")
-        print("     -> Press [ENTER] in this terminal to continue scraping.")
-        print("=" * 72 + "\n")
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Flipkart Browser Session Scraper & Keep-Alive Monitor")
+    parser.add_argument("--seller-id", type=str, default=DEFAULT_FALLBACK_SELLER_ID, help="Dynamic seller ID for info URL")
+    parser.add_argument("--refresh-now", action="store_true", help="Immediately refresh page and extract session to session.json")
+    parser.add_argument("--interval", type=int, default=REFRESH_INTERVAL, help="Refresh interval in seconds (default: 600)")
+    args = parser.parse_args()
 
-        if sys.stdin.isatty():
-            try:
-                input("Press [ENTER] after logging in to the opened browser... ")
-            except (KeyboardInterrupt, EOFError):
-                logger.warning("Session capture prompt interrupted by user.")
+    handler = PlaywrightSessionHandler(refresh_interval=args.interval)
+
+    if args.refresh_now:
+        res = handler.refresh_and_extract_session(seller_id=args.seller_id)
+        if res:
+            print("[+] Session successfully refreshed and extracted!")
         else:
-            # Non-interactive wait loop
-            logger.info("Waiting for login in opened browser...")
-            for _ in range(60):
-                time.sleep(2)
-                session = self.extract_session_from_opened_browser()
-                if session and len(session.get("cookies", {})) > 2:
-                    return session
-
-        # Step 4: Extract the session from the opened browser without closing it
-        session = self.extract_session_from_opened_browser()
-        if session and session.get("cookies"):
-            return session
-
-        # Return empty structure if no cookies found
-        return {
-            "cookies": {},
-            "headers": {
-                "Accept": "application/json, text/plain, */*",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Origin": self.base_url,
-                "Referer": f"{self.base_url}/",
-            },
-        }
-
-    def extract_existing_profile_cookies(self) -> Dict[str, str]:
-        """
-        Extracts cookies from the opened browser or persistent profile.
-        """
-        if self.is_browser_open():
-            session = self.extract_session_from_opened_browser()
-            if session and session.get("cookies"):
-                return session["cookies"]
-
-        return {}
+            print("[-] Failed to refresh session from browser.")
+    else:
+        try:
+            asyncio.run(handler._async_keepalive_loop(seller_id=args.seller_id))
+        except KeyboardInterrupt:
+            print("\n[INFO] Keep-alive monitoring stopped.")

@@ -2,10 +2,12 @@
 Main Orchestration Script for Customer Scraping Automation.
 
 Processes customer/seller IDs sequentially, calls API #1, #2, #3, evaluates
-business rules, handles authentication refresh, persists output to Excel,
-and guarantees resumability and data integrity.
+business rules, handles authentication refresh via Playwright CDP, maintains a
+10-minute browser tab keepalive refresh, persists output to CSV, and guarantees
+resumability and data integrity.
 """
 
+import argparse
 from datetime import datetime
 import json
 import logging
@@ -24,7 +26,7 @@ if str(BASE_DIR) not in sys.path:
 from config.settings import (
     INPUT_FILE_PATH,
     LOG_FILE_PATH,
-    OUTPUT_EXCEL_PATH,
+    OUTPUT_CSV_PATH,
     PROGRESS_FILE_PATH,
     SESSION_CONFIG_PATH,
 )
@@ -33,7 +35,7 @@ from api.api_client import APIClient, APIError
 from scrapers.api1_scraper import API1Scraper
 from scrapers.api2_scraper import API2Scraper
 from scrapers.api3_scraper import API3Scraper
-from excel.excel_writer import ExcelWriter
+from excel.excel_writer import CSVWriter, ExcelWriter
 
 
 def setup_logger() -> logging.Logger:
@@ -109,16 +111,19 @@ class ProgressTracker:
         self.last_completed_id = clean_id
         self._save()
 
-    def sync_with_excel(self, excel_ids: Set[str]) -> None:
+    def sync_with_csv(self, csv_ids: Set[str]) -> None:
         """
-        Synchronizes state with completed IDs found in the Excel workbook.
+        Synchronizes state with completed IDs found in the CSV dataset.
         """
-        if excel_ids:
+        if csv_ids:
             before_count = len(self.completed_ids)
-            self.completed_ids.update(excel_ids)
+            self.completed_ids.update(csv_ids)
             if len(self.completed_ids) > before_count:
-                logger.info("Synchronized progress: found %d completed IDs in Excel.", len(self.completed_ids))
+                logger.info("Synchronized progress: found %d completed IDs in CSV.", len(self.completed_ids))
                 self._save()
+
+    # Backward compatibility alias
+    sync_with_excel = sync_with_csv
 
     def is_completed(self, customer_id: str) -> bool:
         """Checks whether customer ID has already been completed."""
@@ -164,34 +169,31 @@ def read_customer_ids(file_path: Path) -> List[str]:
 
 
 def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="Customer Scraping Automation")
-    parser.add_argument("--login", action="store_true", help="Launch Playwright persistent browser window for manual login")
-    parser.add_argument("--extract-chrome", action="store_true", help="Extract session directly from installed Chrome profile/path")
-    parser.add_argument("--chrome-path", type=str, help="Specify custom Chrome installation or User Data path")
+    parser = argparse.ArgumentParser(description="Flipkart Customer Scraping Automation")
+    parser.add_argument("--refresh-session", action="store_true", help="Refresh Flipkart tab in Chrome and update session.json")
+    parser.add_argument("--monitor-session", action="store_true", help="Run 10-minute browser tab keepalive refresh loop")
+    parser.add_argument("--seller-id", type=str, default=None, help="Specific seller ID for session refresh / keepalive")
     parser.add_argument("--import-curl", type=str, help="Import session headers and cookies from a copied cURL command")
     parser.add_argument("--set-cookie", type=str, help="Set cookie string directly")
     args = parser.parse_args()
 
-    # 1. Initialize Components
+    # 1. Initialize Authentication Manager
     auth_manager = AuthManager(SESSION_CONFIG_PATH)
 
-    if args.chrome_path or args.extract_chrome:
-        target_path = args.chrome_path or None
-        success = auth_manager.extract_session_from_custom_chrome(target_path)
+    # Handle standalone CLI commands
+    if args.refresh_session:
+        logger.info("Manual session refresh requested via --refresh-session.")
+        success = auth_manager.refresh_session(seller_id=args.seller_id)
         if success:
-            print(f"[+] Successfully extracted {len(auth_manager.cookies)} session cookies from Chrome into {SESSION_CONFIG_PATH.name}")
+            print(f"\n[+] Successfully refreshed and saved {len(auth_manager.cookies)} cookies to {SESSION_CONFIG_PATH.name}")
         else:
-            print("[-] Could not extract active cookies from specified Chrome path.")
+            print("\n[-] Session refresh could not be completed.")
         return
 
-    if args.login:
-        logger.info("Manual login requested via --login flag.")
-        success = auth_manager.login_with_playwright()
-        if success:
-            print("\n[+] Browser session authenticated and persistent profile updated!")
-        else:
-            print("\n[-] Login could not be completed.")
+    if args.monitor_session:
+        logger.info("Keep-alive monitoring requested via --monitor-session.")
+        import asyncio
+        asyncio.run(auth_manager.playwright_handler._async_keepalive_loop(seller_id=args.seller_id))
         return
 
     if args.import_curl:
@@ -212,34 +214,6 @@ def main():
     logger.info("START - Customer Scraping Automation")
     logger.info("==========================================")
 
-    # If no session cookies found, launch Playwright Persistent Context browser
-    if not auth_manager.cookies:
-        logger.info("No active session cookies found. Launching Playwright persistent browser...")
-        try:
-            auth_success = auth_manager.login_with_playwright()
-            if not auth_success or not auth_manager.cookies:
-                logger.error("Authentication required to proceed. Please run with --login or populate valid credentials.")
-                return
-        except Exception as e:
-            logger.error("Authentication error: %s", str(e))
-            return
-
-    api_client = APIClient(auth_manager)
-    
-    api1 = API1Scraper(api_client)
-    api2 = API2Scraper(api_client)
-    api3 = API3Scraper(api_client)
-    
-    excel_writer = ExcelWriter()
-    progress_tracker = ProgressTracker()
-
-    # 2. Synchronize progress with existing Excel workbook
-    excel_completed = excel_writer.get_completed_customer_ids()
-    progress_tracker.sync_with_excel(excel_completed)
-
-    # 3. Flush any pending unpersisted data if present
-    excel_writer.flush_pending()
-
     # 4. Load Customer IDs
     customer_ids = read_customer_ids(INPUT_FILE_PATH)
     if not customer_ids:
@@ -247,8 +221,40 @@ def main():
         logger.info("END - Scraper finished (No input).")
         return
 
+    first_seller_id = customer_ids[0] if customer_ids else None
+
+    # If no session cookies found, attempt automatic refresh/extraction from browser
+    if not auth_manager.cookies:
+        logger.info("No active session cookies found in %s. Connecting to browser via CDP...", SESSION_CONFIG_PATH.name)
+        try:
+            auth_success = auth_manager.refresh_session(seller_id=first_seller_id)
+            if not auth_success or not auth_manager.cookies:
+                logger.error("Authentication required to proceed. Please ensure Chrome is open with CDP and logged in.")
+                return
+        except Exception as e:
+            logger.error("Authentication error: %s", str(e))
+            return
+
+    # Start background 10-minute tab keepalive refresher
+    auth_manager.start_keepalive_refresher(seller_id=first_seller_id)
+
+    api_client = APIClient(auth_manager)
+    api1 = API1Scraper(api_client)
+    api2 = API2Scraper(api_client)
+    api3 = API3Scraper(api_client)
+    
+    csv_writer = CSVWriter()
+    progress_tracker = ProgressTracker()
+
+    # 2. Synchronize progress with existing CSV dataset
+    csv_completed = csv_writer.get_completed_customer_ids()
+    progress_tracker.sync_with_csv(csv_completed)
+
+    # 3. Flush any pending unpersisted data if present
+    csv_writer.flush_pending()
+
     # Calculate current sequential Sr No counter
-    current_sr_no = excel_writer.get_current_customer_count() + 1
+    current_sr_no = csv_writer.get_current_customer_count() + 1
 
     total_ids = len(customer_ids)
     processed_in_session = 0
@@ -272,7 +278,7 @@ def main():
 
                 # Check Support Manager Condition
                 if support_mgr == "Yes":
-                    save_success = excel_writer.append_customer(api1_data, sr_no=current_sr_no)
+                    save_success = csv_writer.append_customer(api1_data, sr_no=current_sr_no)
                     if save_success:
                         progress_tracker.mark_completed(customer_id)
                         current_sr_no += 1
@@ -282,7 +288,7 @@ def main():
                             index, total_ids, customer_id, account_name, tier
                         )
                     else:
-                        logger.error("Failed to persist data to Excel for customer ID: %s", customer_id)
+                        logger.error("Failed to persist data to CSV for customer ID: %s", customer_id)
                     continue
 
                 # Step 2: Execute API #2 (GraphQL Listings & Brand Analysis)
@@ -301,8 +307,8 @@ def main():
                     **api3_data,
                 }
 
-                # Step 5: Save to Excel
-                save_success = excel_writer.append_customer(combined_record, sr_no=current_sr_no)
+                # Step 5: Save to CSV
+                save_success = csv_writer.append_customer(combined_record, sr_no=current_sr_no)
                 if save_success:
                     progress_tracker.mark_completed(customer_id)
                     current_sr_no += 1
@@ -313,11 +319,11 @@ def main():
                         index, total_ids, customer_id, account_name, tier, listings_cnt, brand_info
                     )
                 else:
-                    logger.error("Failed to persist data to Excel for customer ID: %s", customer_id)
+                    logger.error("Failed to persist data to CSV for customer ID: %s", customer_id)
 
             except AuthExpiredError as auth_err:
                 logger.critical("[ALERT] Authentication expired while processing %s: %s", customer_id, str(auth_err))
-                print("\n[!] Scraping paused due to authentication expiry. Please update config/session.json and restart.")
+                print(f"\n[!] Scraping paused due to authentication expiry on {customer_id}. Please refresh session.")
                 break
 
             except APIError as api_err:
@@ -332,7 +338,10 @@ def main():
         logger.warning("Scraper execution interrupted by user (KeyboardInterrupt). Shutting down cleanly...")
     finally:
         # Attempt final flush of any pending records
-        excel_writer.flush_pending()
+        csv_writer.flush_pending()
+        
+        # Stop background keepalive refresher
+        auth_manager.stop_keepalive_refresher()
         
         logger.info("==========================================")
         logger.info("Scraping Summary:")
@@ -340,8 +349,8 @@ def main():
         logger.info("  Processed in this session:   %d", processed_in_session)
         logger.info("  Skipped (already completed): %d", skipped_count)
         logger.info("  Failed:                      %d", failed_count)
-        logger.info("  Total completed in Excel:    %d", len(progress_tracker.completed_ids))
-        logger.info("  Excel Output:                %s", OUTPUT_EXCEL_PATH)
+        logger.info("  Total completed in CSV:      %d", len(progress_tracker.completed_ids))
+        logger.info("  CSV Output:                  %s", OUTPUT_CSV_PATH)
         logger.info("==========================================")
 
 

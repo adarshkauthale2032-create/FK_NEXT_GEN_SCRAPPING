@@ -170,9 +170,20 @@ class APIClient:
             # If inner loop broke due to session expiry
             auth_attempts += 1
             if auth_attempts <= MAX_AUTH_RETRIES:
-                logger.info("Triggering auth refresh (Auth attempt %d/%d)...", auth_attempts, MAX_AUTH_RETRIES)
+                # Extract sellerId if available in params or url
+                seller_id = None
+                if params and isinstance(params, dict) and "sellerId" in params:
+                    seller_id = params["sellerId"]
+                elif "sellerId=" in full_url:
+                    import urllib.parse
+                    parsed = urllib.parse.urlparse(full_url)
+                    query_params = urllib.parse.parse_qs(parsed.query)
+                    if "sellerId" in query_params:
+                        seller_id = query_params["sellerId"][0]
+
+                logger.info("Triggering auth refresh for seller %s (Auth attempt %d/%d)...", seller_id or "default", auth_attempts, MAX_AUTH_RETRIES)
                 try:
-                    refreshed = self.auth_manager.refresh_session()
+                    refreshed = self.auth_manager.refresh_session(seller_id=seller_id)
                     if not refreshed:
                         raise AuthExpiredError("Unable to refresh authorized session.")
                 except Exception as auth_err:
