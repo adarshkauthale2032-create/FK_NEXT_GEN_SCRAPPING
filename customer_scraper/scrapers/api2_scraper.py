@@ -141,8 +141,9 @@ class API2Scraper:
 
             page += 1
 
-        # Extract unique brand names with case-insensitive normalization
-        unique_brands: Set[str] = set()
+        # Extract brand names and calculate duplicate occurrences
+        from collections import Counter
+        brand_counter: Counter = Counter()
         approved_found_count = 0
 
         for item in all_records:
@@ -161,21 +162,44 @@ class API2Scraper:
 
             if is_approved:
                 approved_found_count += 1
-                brand_name = item.get("brand_name") or item.get("brand") or item.get("brandName")
+                brand_name = (
+                    item.get("brand_name")
+                    or item.get("brand")
+                    or item.get("brandName")
+                    or item.get("internal_brand_id")
+                )
                 if brand_name is not None:
                     brand_clean = str(brand_name).strip()
                     if brand_clean and brand_clean.lower() not in ("null", "none", ""):
-                        unique_brands.add(brand_clean.lower())
+                        brand_counter[brand_clean.lower()] += 1
+
+        # Calculate number of duplicate instances (e.g. if "BRAND" appears 3 times, duplicates = 3 - 1 = 2)
+        duplicates = sum(cnt - 1 for cnt in brand_counter.values() if cnt > 1)
+
+        # Baseline count is approved_count (e.g. 7)
+        base_count = approved_count if approved_count > 0 else approved_found_count
+
+        if base_count > 0:
+            # Reduce baseline count ONLY by duplicates of same-name brands; treat all other records as unique
+            if duplicates > 0:
+                actual_brand_count = max(1, base_count - duplicates)
+            else:
+                actual_brand_count = base_count
+        else:
+            actual_brand_count = 0
+
+        unique_brands = set(brand_counter.keys())
 
         logger.info(
-            "API #2 (requestsV2) for %s -> Total fetched: %d, Approved records: %d, Unique brands: %d",
+            "API #2 (requestsV2) for %s -> Base Approved: %d, Duplicates found: %d, Actual Brand Count: %d, Unique brand names: %d",
             customer_id,
-            len(all_records),
-            approved_found_count or approved_count,
+            base_count,
+            duplicates,
+            actual_brand_count,
             len(unique_brands),
         )
 
-        return len(unique_brands), unique_brands
+        return actual_brand_count, unique_brands
 
     def get_brand_approval_details(self, customer_id: str) -> Dict[str, Any]:
         """

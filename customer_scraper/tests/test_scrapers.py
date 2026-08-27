@@ -145,6 +145,25 @@ class TestAPI2Scraper(unittest.TestCase):
         self.assertIn("brand", res["unique_brands"])
         self.assertIn("other_brand", res["unique_brands"])
 
+    def test_approved_7_with_all_unique_brands_gives_7(self):
+        self.mock_client.get.return_value = {"ALL": 10, "APPROVED": 7}
+        mock_records = [
+            {"brand_name": f"UNIQUE_BRAND_{i}", "request_status": "Approved"}
+            for i in range(1, 8)
+        ]
+        self.mock_client.post.return_value = mock_records
+        res = self.scraper.get_brand_approval_details("SELLER_7")
+        self.assertEqual(res["approved_brand"], 7)
+        self.assertEqual(res["actual_brand_count"], 7)
+
+    def test_approved_7_with_empty_requests_gives_7(self):
+        # If requestsV2 returns empty/fails, approved count (7) is preserved as actual count
+        self.mock_client.get.return_value = {"ALL": 7, "APPROVED": 7}
+        self.mock_client.post.return_value = []
+        res = self.scraper.get_brand_approval_details("SELLER_EMPTY")
+        self.assertEqual(res["approved_brand"], 7)
+        self.assertEqual(res["actual_brand_count"], 7)
+
     def test_zero_approved_brands(self):
         self.mock_client.get.return_value = {
             "ALL": 0,
