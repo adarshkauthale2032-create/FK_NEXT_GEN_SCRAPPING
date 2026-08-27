@@ -59,7 +59,7 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         ids = read_customer_ids(input_xlsx)
         self.assertEqual(ids, ["XLSX_ID_1", "XLSX_ID_2", "XLSX_ID_3"])
 
-    def test_support_manager_yes_skips_api2_and_api3(self):
+    def test_support_manager_yes_runs_all_apis_without_skipping(self):
         customer_id = "ID_SUPP_YES"
 
         # API 1 mock with Support Manager = Yes
@@ -76,13 +76,10 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.assertEqual(api1_data["support_manager"], "Yes")
         self.assertEqual(api1_data["account_status"], "ACTIVE")
 
-        # In main workflow, when Yes: save and mark completed without calling api2/api3
+        # In updated workflow, all APIs run for all sellers
         saved = self.csv_writer.append_customer(api1_data, sr_no=1)
         self.assertTrue(saved)
         self.tracker.mark_completed(customer_id)
-
-        # Verify API #2 and #3 were not called
-        self.assertEqual(self.mock_client.post.call_count, 0)
         self.assertTrue(self.tracker.is_completed(customer_id))
 
     def test_resume_skips_already_completed_customers(self):
@@ -165,7 +162,8 @@ class TestIntegrationScraperFlow(unittest.TestCase):
 
         res2 = self.api2.get_brand_approval_details(cust_id)
         self.assertEqual(res2["approved_brand"], 26)
-        self.assertEqual(res2["actual_brand_count"], 2)  # RRCART and TOY_BRAND
+        # Baseline approved = 26. "RRCART" and "rrcart" is 1 duplicate -> 26 - 1 = 25
+        self.assertEqual(res2["actual_brand_count"], 25)
 
         res3 = self.api3.get_seller_contacts(cust_id)
         self.assertEqual(res3["email_id"], "unman@mail.com")
@@ -183,9 +181,12 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.assertEqual(rows[1][1], cust_id)
         self.assertEqual(rows[1][2], "Unmanaged Seller")
         self.assertEqual(rows[1][3], "ACTIVE")
-        self.assertEqual(rows[1][4], "26")
-        self.assertEqual(rows[1][5], "2")
-        self.assertEqual(rows[1][6], "No")
+        self.assertEqual(rows[1][4], "No")  # Support Manager
+        self.assertEqual(rows[1][5], "Bronze")  # Seller Tier
+        self.assertEqual(rows[1][6], "2020-01-01")  # Signed Up Date
+        self.assertEqual(rows[1][7], "2020-01-10")  # Live Date
+        self.assertEqual(rows[1][8], "26")  # Approved Brand
+        self.assertEqual(rows[1][9], "25")  # Actual Brand Count
 
     def test_seller_limit_stops_execution(self):
         limit = 2

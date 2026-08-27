@@ -139,12 +139,12 @@ class CSVWriter:
                 2: 20,  # Customer ID
                 3: 25,  # Account Name
                 4: 18,  # Account Status
-                5: 16,  # Approved Brand
-                6: 18,  # Actual Brand Count
-                7: 16,  # Support Manager
-                8: 14,  # Seller Tier
-                9: 15,  # Signed Up Date
-                10: 15, # Live Date
+                5: 16,  # Support Manager
+                6: 14,  # Seller Tier
+                7: 15,  # Signed Up Date
+                8: 15,  # Live Date
+                9: 16,  # Approved Brand
+                10: 18, # Actual Brand Count
                 11: 18, # Mobile Number
                 12: 24, # Registered Mobile Number
                 13: 25, # Email ID
@@ -343,36 +343,32 @@ class CSVWriter:
         return s
 
     def _format_customer_rows(self, data: Dict[str, Any], sr_no: Any) -> List[List[Any]]:
-        """Formats customer scraped data into a tabular row."""
+        """Formats customer scraped data into a tabular row matching the configured CSV_COLUMNS order."""
         customer_id = data.get("customer_id", "")
         account_name = data.get("account_name", "")
         account_status = data.get("account_status", "")
-        approved_brand = data.get("approved_brand", "")
-        actual_brand_count = data.get("actual_brand_count", "")
         support_manager = data.get("support_manager", "")
         seller_tier = data.get("seller_tier", "")
         signed_up_date = self._clean_date_str(data.get("signed_up_date", ""))
         live_date = self._clean_date_str(data.get("live_date", ""))
+        approved_brand = data.get("approved_brand", "")
+        actual_brand_count = data.get("actual_brand_count", "")
         mobile_number = data.get("mobile_number", "")
         registered_mobile = data.get("registered_mobile_number", "")
         email_id = data.get("email_id", "")
         registered_email = data.get("registered_email_id", "")
-
-        # Format numeric counts cleanly
-        approved_val = "" if (support_manager == "Yes" and approved_brand == "") else approved_brand
-        actual_val = "" if (support_manager == "Yes" and actual_brand_count == "") else actual_brand_count
 
         return [[
             sr_no,
             customer_id,
             account_name,
             account_status,
-            approved_val,
-            actual_val,
             support_manager,
             seller_tier,
             signed_up_date,
             live_date,
+            approved_brand,
+            actual_brand_count,
             mobile_number,
             registered_mobile,
             email_id,

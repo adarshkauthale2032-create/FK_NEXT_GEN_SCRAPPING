@@ -99,10 +99,8 @@ class API2Scraper:
             "Sec-Fetch-Site": "same-origin",
         }
 
-        # Determine optimal page size (requesting full approved count or at least 10)
-        requested_page_size = max(approved_count, 10)
-        # Cap single page request to 500 to prevent server timeouts, then paginate if more
-        page_size = min(requested_page_size, 500)
+        # Determine page size: send max(approved_count, 1000) to retrieve all records in 1 shot
+        page_size = max(approved_count, 1000)
 
         all_records: List[Dict[str, Any]] = []
         page = 1

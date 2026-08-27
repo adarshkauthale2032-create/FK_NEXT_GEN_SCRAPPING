@@ -60,12 +60,10 @@ class TestCSVWriter(unittest.TestCase):
         self.assertEqual(row_vals[1], "CUST_001")
         self.assertEqual(row_vals[2], "Acme Corp")
         self.assertEqual(row_vals[3], "ACTIVE")  # Account Status
-        self.assertEqual(row_vals[4], "")  # Approved Brand (empty for Yes)
-        self.assertEqual(row_vals[5], "")  # Actual Brand Count (empty for Yes)
-        self.assertEqual(row_vals[6], "Yes")  # Support Manager
-        self.assertEqual(row_vals[7], "Gold")  # Seller Tier
-        self.assertEqual(row_vals[8], "2021-01-01")
-        self.assertEqual(row_vals[9], "2021-01-15")
+        self.assertEqual(row_vals[4], "Yes")  # Support Manager
+        self.assertEqual(row_vals[5], "Gold")  # Seller Tier
+        self.assertEqual(row_vals[6], "2021-01-01")
+        self.assertEqual(row_vals[7], "2021-01-15")
 
     def test_append_customer_support_manager_no_with_brands(self):
         cust_data = {
@@ -96,12 +94,12 @@ class TestCSVWriter(unittest.TestCase):
         self.assertEqual(row_vals[1], "CUST_002")
         self.assertEqual(row_vals[2], "Retailer Plus")
         self.assertEqual(row_vals[3], "ACTIVE")
-        self.assertEqual(row_vals[4], "26")
-        self.assertEqual(row_vals[5], "15")
-        self.assertEqual(row_vals[6], "No")
-        self.assertEqual(row_vals[7], "Silver")
-        self.assertEqual(row_vals[8], "2022-03-10")
-        self.assertEqual(row_vals[9], "2022-03-20")
+        self.assertEqual(row_vals[4], "No")
+        self.assertEqual(row_vals[5], "Silver")
+        self.assertEqual(row_vals[6], "2022-03-10")
+        self.assertEqual(row_vals[7], "2022-03-20")
+        self.assertEqual(row_vals[8], "26")
+        self.assertEqual(row_vals[9], "15")
         self.assertEqual(row_vals[10], "9876543210")
         self.assertEqual(row_vals[11], "9876543211")
         self.assertEqual(row_vals[12], "contact@retail.com")

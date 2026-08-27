@@ -430,29 +430,6 @@ def main():
                 support_mgr = api1_data.get("support_manager", "No")
                 tier = api1_data.get("seller_tier", "")
 
-                # Check Support Manager Condition
-                if support_mgr == "Yes":
-                    save_success = excel_writer.append_customer(api1_data, sr_no=current_sr_no)
-                    if save_success:
-                        progress_tracker.mark_completed(customer_id)
-                        logger.info(
-                            "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Status: %s | Tier: %s | Support Manager: Yes -> SAVED (%s & %s)",
-                            index, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, account_status, tier, target_excel.name, target_csv.name
-                        )
-                        if current_sr_no % chunk_size == 0:
-                            logger.info(
-                                "🎉 [BATCH COMPLETED] Batch #%d (%d sellers) fully saved to %s and %s!",
-                                batch_num, chunk_size, target_excel.name, target_csv.name
-                            )
-                        current_sr_no += 1
-                        processed_in_session += 1
-                        if max_limit and processed_in_session >= max_limit:
-                            logger.info("🎉 [SESSION COMPLETE] Successfully scraped target of %d sellers in this run. Stopping script cleanly.", max_limit)
-                            break
-                    else:
-                        logger.error("Failed to persist data for customer ID: %s", customer_id)
-                    continue
-
                 # Step 2: Execute API #2 (Approval Store & Brand Count Analysis)
                 api2_data = api2.get_brand_approval_details(customer_id)
                 approved_brand_cnt = api2_data.get("approved_brand", 0)
@@ -473,8 +450,8 @@ def main():
                 if save_success:
                     progress_tracker.mark_completed(customer_id)
                     logger.info(
-                        "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Status: %s | Approved Brands: %s | Actual Brands: %s | Tier: %s -> SAVED (%s & %s)",
-                        index, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, account_status, approved_brand_cnt, actual_brand_cnt, tier, target_excel.name, target_csv.name
+                        "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Status: %s | Support Mgr: %s | Approved Brands: %s | Actual Brands: %s | Tier: %s -> SAVED (%s & %s)",
+                        index, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, account_status, support_mgr, approved_brand_cnt, actual_brand_cnt, tier, target_excel.name, target_csv.name
                     )
                     if current_sr_no % chunk_size == 0:
                         logger.info(
