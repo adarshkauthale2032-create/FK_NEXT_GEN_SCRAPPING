@@ -138,18 +138,17 @@ class CSVWriter:
                 1: 8,   # Sr No
                 2: 20,  # Customer ID
                 3: 25,  # Account Name
-                4: 16,  # Support Manager
-                5: 14,  # Seller Tier
-                6: 15,  # Signed Up Date
-                7: 15,  # Live Date
-                8: 40,  # Brand List
-                9: 20,  # Listing Brand
-                10: 18, # Is Brand
-                11: 20, # Brand Name
-                12: 18, # Mobile Number
-                13: 24, # Registered Mobile Number
-                14: 25, # Email ID
-                15: 28, # Registered Email ID
+                4: 18,  # Account Status
+                5: 16,  # Approved Brand
+                6: 18,  # Actual Brand Count
+                7: 16,  # Support Manager
+                8: 14,  # Seller Tier
+                9: 15,  # Signed Up Date
+                10: 15, # Live Date
+                11: 18, # Mobile Number
+                12: 24, # Registered Mobile Number
+                13: 25, # Email ID
+                14: 28, # Registered Email ID
             }
             for col_idx, width in col_widths.items():
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
@@ -344,105 +343,41 @@ class CSVWriter:
         return s
 
     def _format_customer_rows(self, data: Dict[str, Any], sr_no: Any) -> List[List[Any]]:
-        """Formats customer scraped data into one or more tabular rows."""
+        """Formats customer scraped data into a tabular row."""
         customer_id = data.get("customer_id", "")
         account_name = data.get("account_name", "")
+        account_status = data.get("account_status", "")
+        approved_brand = data.get("approved_brand", "")
+        actual_brand_count = data.get("actual_brand_count", "")
         support_manager = data.get("support_manager", "")
         seller_tier = data.get("seller_tier", "")
         signed_up_date = self._clean_date_str(data.get("signed_up_date", ""))
         live_date = self._clean_date_str(data.get("live_date", ""))
-
-        # Case 1: Support Manager is Yes -> Only API #1 info
-        if support_manager == "Yes":
-            return [[
-                sr_no,
-                customer_id,
-                account_name,
-                "Yes",
-                seller_tier,
-                signed_up_date,
-                live_date,
-                "",  # Brand List
-                "",  # Listing Brand
-                "",  # Is Brand
-                "",  # Brand Name
-                "",  # Mobile Number
-                "",  # Registered Mobile
-                "",  # Email ID
-                "",  # Registered Email
-            ]]
-
-        # Case 2: Support Manager is No -> Include API #2 and API #3
-        is_brand = data.get("is_brand", "")
-        brand_name = data.get("brand_name", "")
         mobile_number = data.get("mobile_number", "")
         registered_mobile = data.get("registered_mobile_number", "")
         email_id = data.get("email_id", "")
         registered_email = data.get("registered_email_id", "")
-        listing_titles = data.get("listing_titles", [])
-        listing_brands = data.get("listing_brands", [])
 
-        # If no listings were returned, write single row with listing fields blank
-        if not listing_titles:
-            return [[
-                sr_no,
-                customer_id,
-                account_name,
-                "No",
-                seller_tier,
-                signed_up_date,
-                live_date,
-                "",
-                "",
-                is_brand,
-                brand_name,
-                mobile_number,
-                registered_mobile,
-                email_id,
-                registered_email,
-            ]]
+        # Format numeric counts cleanly
+        approved_val = "" if (support_manager == "Yes" and approved_brand == "") else approved_brand
+        actual_val = "" if (support_manager == "Yes" and actual_brand_count == "") else actual_brand_count
 
-        # If listings exist (up to 20), output one row per listing
-        rows = []
-        for idx, title in enumerate(listing_titles):
-            brand_for_listing = listing_brands[idx] if idx < len(listing_brands) else ""
-            if idx == 0:
-                rows.append([
-                    sr_no,
-                    customer_id,
-                    account_name,
-                    "No",
-                    seller_tier,
-                    signed_up_date,
-                    live_date,
-                    title,
-                    brand_for_listing,
-                    is_brand,
-                    brand_name,
-                    mobile_number,
-                    registered_mobile,
-                    email_id,
-                    registered_email,
-                ])
-            else:
-                rows.append([
-                    "",  # Sr No
-                    "",  # Customer ID
-                    "",  # Account Name
-                    "",  # Support Manager
-                    "",  # Seller Tier
-                    "",  # Signed Up Date
-                    "",  # Live Date
-                    title,  # Brand List (Product Title)
-                    brand_for_listing,  # Listing Brand
-                    "",  # Is Brand
-                    "",  # Brand Name
-                    "",  # Mobile Number
-                    "",  # Registered Mobile
-                    "",  # Email ID
-                    "",  # Registered Email
-                ])
-        return rows
+        return [[
+            sr_no,
+            customer_id,
+            account_name,
+            account_status,
+            approved_val,
+            actual_val,
+            support_manager,
+            seller_tier,
+            signed_up_date,
+            live_date,
+            mobile_number,
+            registered_mobile,
+            email_id,
+            registered_email,
+        ]]
 
     def append_customer(self, customer_data: Dict[str, Any], sr_no: Any) -> bool:
         """

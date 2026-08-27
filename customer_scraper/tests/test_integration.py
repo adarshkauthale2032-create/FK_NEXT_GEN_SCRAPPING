@@ -67,12 +67,14 @@ class TestIntegrationScraperFlow(unittest.TestCase):
             "result": {
                 "displayName": "Managed Seller",
                 "supportRole": {"name": "Manager Alex"},
-                "liveDate": "2023-01-01"
+                "liveDate": "2023-01-01",
+                "gmv": {"response": {"details": {"state_details": {"state": "ACTIVE"}}}}
             }
         }
 
         api1_data = self.api1.get_seller_details(customer_id)
         self.assertEqual(api1_data["support_manager"], "Yes")
+        self.assertEqual(api1_data["account_status"], "ACTIVE")
 
         # In main workflow, when Yes: save and mark completed without calling api2/api3
         saved = self.csv_writer.append_customer(api1_data, sr_no=1)
@@ -110,18 +112,29 @@ class TestIntegrationScraperFlow(unittest.TestCase):
                     "phone_num": None,
                     "manager_email_id": None,
                 },
-                "gmv": {"response": {"details": {"darwin_tier_v2": {"tier_name": "Bronze"}}}},
+                "gmv": {
+                    "response": {
+                        "details": {
+                            "state_details": {"state": "ACTIVE"},
+                            "darwin_tier_v2": {"tier_name": "Bronze"}
+                        }
+                    }
+                },
                 "profileInfo": {"created_at": "2020-01-01"},
                 "liveDate": "2020-01-10",
             }
         }
 
-        # 2. API 2 response (20 listings, 15 brand matches -> Brand)
-        api2_resp = {
-            "listing_data_response": [{"title": f"Shoe {i}", "brand": "NIKE"} for i in range(15)] + [
-                {"title": f"Socks {i}", "brand": "GENERIC"} for i in range(5)
-            ]
+        # 2. API 2 responses (Count + Requests)
+        api2_count_resp = {
+            "ALL": 43,
+            "APPROVED": 26,
         }
+        api2_records_resp = [
+            {"brand_name": "RRCART", "request_status": "Approved"},
+            {"brand_name": "rrcart", "request_status": "Approved"},
+            {"brand_name": "TOY_BRAND", "request_status": "Approved"},
+        ]
 
         # 3. API 3 response
         api3_resp = {
@@ -133,24 +146,26 @@ class TestIntegrationScraperFlow(unittest.TestCase):
             }
         }
 
-        def mock_get(endpoint):
+        def mock_get(endpoint, headers=None):
             if "getSellerDetails" in endpoint:
                 return api1_resp
+            if "requestsV2-count" in endpoint:
+                return api2_count_resp
             if "getSellerContacts" in endpoint:
                 return api3_resp
             return {}
 
         self.mock_client.get.side_effect = mock_get
-        self.mock_client.post.return_value = api2_resp
+        self.mock_client.post.return_value = api2_records_resp
 
         # Run flow
         res1 = self.api1.get_seller_details(cust_id)
         self.assertEqual(res1["support_manager"], "No")
+        self.assertEqual(res1["account_status"], "ACTIVE")
 
-        res2 = self.api2.get_listings_and_brand(cust_id)
-        self.assertEqual(res2["is_brand"], "Possibly a Brand")
-        self.assertEqual(res2["brand_name"], "NIKE")
-        self.assertEqual(len(res2["listing_titles"]), 20)
+        res2 = self.api2.get_brand_approval_details(cust_id)
+        self.assertEqual(res2["approved_brand"], 26)
+        self.assertEqual(res2["actual_brand_count"], 2)  # RRCART and TOY_BRAND
 
         res3 = self.api3.get_seller_contacts(cust_id)
         self.assertEqual(res3["email_id"], "unman@mail.com")
@@ -160,16 +175,19 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.assertTrue(saved)
         self.tracker.mark_completed(cust_id)
 
-        # Verify CSV output has 20 listing rows + header = 21 rows
+        # Verify CSV output
         with open(self.csv_file, "r", encoding="utf-8-sig") as f:
             rows = list(csv.reader(f))
 
-        self.assertEqual(len(rows), 21)
-        self.assertEqual(rows[1][7], "Shoe 0")
-        self.assertEqual(rows[20][7], "Socks 4")
+        self.assertEqual(len(rows), 2)  # Header + 1 row
+        self.assertEqual(rows[1][1], cust_id)
+        self.assertEqual(rows[1][2], "Unmanaged Seller")
+        self.assertEqual(rows[1][3], "ACTIVE")
+        self.assertEqual(rows[1][4], "26")
+        self.assertEqual(rows[1][5], "2")
+        self.assertEqual(rows[1][6], "No")
 
     def test_seller_limit_stops_execution(self):
-        # Test that processing stops when max limit (e.g. 2) is reached even if input has 10 IDs
         limit = 2
         input_ids = [f"ID_{i:03d}" for i in range(10)]
         processed_count = 0
@@ -178,7 +196,8 @@ class TestIntegrationScraperFlow(unittest.TestCase):
             "result": {
                 "displayName": "Test Seller",
                 "supportRole": {"name": "Manager Alex"},
-                "liveDate": "2023-01-01"
+                "liveDate": "2023-01-01",
+                "gmv": {"response": {"details": {"state_details": {"state": "ACTIVE"}}}}
             }
         }
 
@@ -194,7 +213,6 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.assertEqual(len(self.tracker.completed_ids), limit)
 
     def test_multi_batch_chunking_across_inputs(self):
-        # Test simulated 6 sellers with chunk_size = 2 -> 3 batch files created
         chunk_dir = self.test_dir / "integration_batches"
         chunk_writer = ExcelWriter(output_dir=chunk_dir, chunk_size=2)
 
@@ -202,7 +220,8 @@ class TestIntegrationScraperFlow(unittest.TestCase):
             "result": {
                 "displayName": "Batch Seller",
                 "supportRole": {"name": "Manager Alex"},
-                "liveDate": "2023-01-01"
+                "liveDate": "2023-01-01",
+                "gmv": {"response": {"details": {"state_details": {"state": "ACTIVE"}}}}
             }
         }
 
@@ -212,8 +231,6 @@ class TestIntegrationScraperFlow(unittest.TestCase):
             chunk_writer.append_customer(data, sr_no=i)
             self.tracker.mark_completed(c_id)
 
-        # Expect 3 xlsx and 3 csv files:
-        # 1 to 2, 3 to 4, 5 to 6
         for start, end in [(1, 2), (3, 4), (5, 6)]:
             xlsx = chunk_dir / f"scraped_data_{start}_to_{end}.xlsx"
             csv_f = chunk_dir / f"scraped_data_{start}_to_{end}.csv"

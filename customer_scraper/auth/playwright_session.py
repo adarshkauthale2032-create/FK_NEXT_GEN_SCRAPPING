@@ -246,22 +246,22 @@ class PlaywrightSessionHandler:
                     pass
 
             if target_page is None:
-                logger.info("[SESSION] Flipkart tab not found. Opening new page: %s", target_info_url)
+                logger.info("[SESSION] Flipkart tab not found. Opening new page: %s", target_approvals_url)
                 target_page = await context.new_page()
-                await target_page.goto(target_info_url, wait_until="domcontentloaded")
+                await target_page.goto(target_approvals_url, wait_until="domcontentloaded")
                 await asyncio.sleep(2)
             else:
                 # First refresh the page as requested
-                logger.info("[SESSION] Refreshing Flipkart page: %s", target_info_url)
+                logger.info("[SESSION] Refreshing Flipkart page: %s", target_approvals_url)
                 try:
-                    # Navigate to dynamic seller info URL if current URL differs
-                    if active_seller_id not in target_page.url:
-                        await target_page.goto(target_info_url, wait_until="domcontentloaded")
+                    # Navigate to trackApprovalRequestsV2 URL if current URL differs
+                    if "trackApprovalRequestsV2" not in target_page.url or active_seller_id not in target_page.url:
+                        await target_page.goto(target_approvals_url, wait_until="domcontentloaded")
                     else:
                         await target_page.reload(wait_until="domcontentloaded")
                 except Exception as nav_err:
                     logger.warning("[SESSION] Page reload error: %s. Retrying goto...", str(nav_err))
-                    await target_page.goto(target_info_url, wait_until="domcontentloaded")
+                    await target_page.goto(target_approvals_url, wait_until="domcontentloaded")
 
                 # Wait for automatic API calls to trigger
                 await asyncio.sleep(2.5)

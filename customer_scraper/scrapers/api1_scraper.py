@@ -146,12 +146,25 @@ class API1Scraper:
         # 1. Account Name
         account_name = self._safe_get(result, "displayName")
 
-        # 2. Support Manager ("Yes" / "No")
+        # 2. Account Status: result.gmv.response.details.state_details.state
+        account_status = self._safe_get(
+            result, "gmv", "response", "details", "state_details", "state"
+        )
+        if not account_status:
+            account_status = self._safe_get(result, "state_details", "state")
+        if not account_status:
+            account_status = self._safe_get(result, "state")
+        if not account_status:
+            account_status = self._safe_get(
+                response_data, "gmv", "response", "details", "state_details", "state"
+            )
+
+        # 3. Support Manager ("Yes" / "No")
         support_role = result.get("supportRole")
         support_manager = self._determine_support_manager(support_role)
         logger.info("Support Manager detected for %s: %s", customer_id, support_manager)
 
-        # 3. Seller Tier: result.gmv.response.details.darwin_tier_v2.tier_name
+        # 4. Seller Tier: result.gmv.response.details.darwin_tier_v2.tier_name
         seller_tier = self._safe_get(
             result, "gmv", "response", "details", "darwin_tier_v2", "tier_name"
         )
@@ -159,19 +172,20 @@ class API1Scraper:
             # Secondary fallback if structure varies
             seller_tier = self._safe_get(result, "darwin_tier_v2", "tier_name")
 
-        # 4. Signed Up Date: result.profileInfo.created_at (formatted to date only)
+        # 5. Signed Up Date: result.profileInfo.created_at (formatted to date only)
         raw_signed_up = self._safe_get(result, "profileInfo", "created_at")
         signed_up_date = self._format_date_only(raw_signed_up)
 
-        # 5. Live Date: result.liveDate (formatted to date only)
+        # 6. Live Date: result.liveDate (formatted to date only)
         raw_live_date = self._safe_get(result, "liveDate")
         live_date = self._format_date_only(raw_live_date)
 
-        logger.info("API #1 successful for customer ID: %s", customer_id)
+        logger.info("API #1 successful for customer ID: %s (Status: %s)", customer_id, account_status)
 
         return {
             "customer_id": str(customer_id).strip(),
             "account_name": account_name,
+            "account_status": account_status,
             "support_manager": support_manager,
             "seller_tier": seller_tier,
             "signed_up_date": signed_up_date,

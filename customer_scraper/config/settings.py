@@ -42,17 +42,17 @@ REFRESH_INTERVAL = 600
 
 # Dynamic Portal URLs
 SELLER_INFO_URL = "https://suv-flipkart.seller-support.fkcloud.it/#app/seller/{seller_id}/info"
-SELLER_APPROVALS_URL = "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={seller_id}#dashboard/listings/trackApprovalRequestsV2?requestState=APPROVED"
+SELLER_APPROVALS_URL = "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={seller_id}#dashboard/listings/trackApprovalRequestsV2?requestState=ALL"
 
 # API Endpoints
 API1_ENDPOINT = "/getSellerDetails?sellerId={customer_id}"
-API2_ENDPOINT = "/sellerDashboard/orchestrator/graphql?sellerId={customer_id}"
+API2_COUNT_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2-count?sellerId={customer_id}"
+API2_REQUESTS_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2?sellerId={customer_id}"
+API2_ENDPOINT = API2_REQUESTS_ENDPOINT  # Compatibility alias
 API3_ENDPOINT = "/getSellerContacts?sellerId={customer_id}"
 API_APPROVALS_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2?sellerId={customer_id}"
 
 # Scraping & Business Rules
-BRAND_THRESHOLD = 12  # Must be strictly > 12 to be considered "Possibly a Brand"
-LISTING_BATCH_SIZE = 20  # Fetch up to 20 listings in API #2
 CHUNK_SIZE = 500  # Number of sellers per output Excel / CSV batch file (e.g. 1-500, 501-1000, 1001-1500, etc.)
 DEFAULT_SCRAPE_LIMIT = 500  # Default number of sellers to scrape in this run
 
@@ -68,19 +68,18 @@ MAX_AUTH_RETRIES = 2  # retry attempts after session refresh
 CSV_RETRY_INTERVAL = 3  # seconds between retries when file is locked
 MAX_CSV_LOCK_RETRIES = 60  # total retries before pausing/raising (approx 3 minutes)
 
-# CSV Column Definitions (Preserving strict order)
+# CSV / Excel Column Definitions (Preserving strict order)
 CSV_COLUMNS = [
     "Sr No",
     "Customer ID",
     "Account Name",
+    "Account Status",
+    "Approved Brand",
+    "Actual Brand Count",
     "Support Manager",
     "Seller Tier",
     "Signed Up Date",
     "Live Date",
-    "Brand List",
-    "Listing Brand",
-    "Is Brand",
-    "Brand Name",
     "Mobile Number",
     "Registered Mobile Number",
     "Email ID",

@@ -426,6 +426,7 @@ def main():
                 # Step 1: Execute API #1 (Customer & Seller Details)
                 api1_data = api1.get_seller_details(customer_id)
                 account_name = api1_data.get("account_name", "")
+                account_status = api1_data.get("account_status", "")
                 support_mgr = api1_data.get("support_manager", "No")
                 tier = api1_data.get("seller_tier", "")
 
@@ -435,8 +436,8 @@ def main():
                     if save_success:
                         progress_tracker.mark_completed(customer_id)
                         logger.info(
-                            "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Tier: %s | Support Manager: Yes -> SAVED (%s & %s)",
-                            index, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, tier, target_excel.name, target_csv.name
+                            "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Status: %s | Tier: %s | Support Manager: Yes -> SAVED (%s & %s)",
+                            index, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, account_status, tier, target_excel.name, target_csv.name
                         )
                         if current_sr_no % chunk_size == 0:
                             logger.info(
@@ -452,11 +453,10 @@ def main():
                         logger.error("Failed to persist data for customer ID: %s", customer_id)
                     continue
 
-                # Step 2: Execute API #2 (GraphQL Listings & Brand Analysis)
-                api2_data = api2.get_listings_and_brand(customer_id)
-                listings_cnt = api2_data.get("listing_count", 0)
-                is_brand = api2_data.get("is_brand", "")
-                brand_name = api2_data.get("brand_name", "")
+                # Step 2: Execute API #2 (Approval Store & Brand Count Analysis)
+                api2_data = api2.get_brand_approval_details(customer_id)
+                approved_brand_cnt = api2_data.get("approved_brand", 0)
+                actual_brand_cnt = api2_data.get("actual_brand_count", 0)
 
                 # Step 3: Execute API #3 (Seller Contact Details)
                 api3_data = api3.get_seller_contacts(customer_id)
@@ -472,10 +472,9 @@ def main():
                 save_success = excel_writer.append_customer(combined_record, sr_no=current_sr_no)
                 if save_success:
                     progress_tracker.mark_completed(customer_id)
-                    brand_info = f"{is_brand} ({brand_name})" if brand_name else is_brand
                     logger.info(
-                        "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Tier: %s | Listings: %d | Brand: %s -> SAVED (%s & %s)",
-                        index, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, tier, listings_cnt, brand_info, target_excel.name, target_csv.name
+                        "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Status: %s | Approved Brands: %s | Actual Brands: %s | Tier: %s -> SAVED (%s & %s)",
+                        index, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, account_status, approved_brand_cnt, actual_brand_cnt, tier, target_excel.name, target_csv.name
                     )
                     if current_sr_no % chunk_size == 0:
                         logger.info(

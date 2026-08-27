@@ -1,5 +1,5 @@
 """
-Unit tests for API 1, API 2, and API 3 scrapers and business rules.
+Unit tests for API 1, API 2 (Approval Store), and API 3 scrapers.
 """
 
 import unittest
@@ -16,7 +16,7 @@ class TestAPI1Scraper(unittest.TestCase):
         self.mock_client = MagicMock(spec=APIClient)
         self.scraper = API1Scraper(self.mock_client)
 
-    def test_support_manager_no_when_all_fields_null(self):
+    def test_account_status_and_support_manager_no(self):
         self.mock_client.get.return_value = {
             "result": {
                 "displayName": "Seller One",
@@ -32,6 +32,9 @@ class TestAPI1Scraper(unittest.TestCase):
                 "gmv": {
                     "response": {
                         "details": {
+                            "state_details": {
+                                "state": "ACTIVE"
+                            },
                             "darwin_tier_v2": {
                                 "tier_name": "Silver"
                             }
@@ -48,6 +51,7 @@ class TestAPI1Scraper(unittest.TestCase):
         res = self.scraper.get_seller_details("ID001")
         self.assertEqual(res["customer_id"], "ID001")
         self.assertEqual(res["account_name"], "Seller One")
+        self.assertEqual(res["account_status"], "ACTIVE")
         self.assertEqual(res["support_manager"], "No")
         self.assertEqual(res["seller_tier"], "Silver")
         self.assertEqual(res["signed_up_date"], "2022-01-15")
@@ -69,6 +73,9 @@ class TestAPI1Scraper(unittest.TestCase):
                 "gmv": {
                     "response": {
                         "details": {
+                            "state_details": {
+                                "state": "BLOCKED"
+                            },
                             "darwin_tier_v2": {
                                 "tier_name": "Gold"
                             }
@@ -85,31 +92,15 @@ class TestAPI1Scraper(unittest.TestCase):
         res = self.scraper.get_seller_details("ID002")
         self.assertEqual(res["support_manager"], "Yes")
         self.assertEqual(res["account_name"], "Seller Two")
+        self.assertEqual(res["account_status"], "BLOCKED")
         self.assertEqual(res["seller_tier"], "Gold")
-
-    def test_support_manager_yes_when_single_non_null_field(self):
-        self.mock_client.get.return_value = {
-            "result": {
-                "displayName": "Seller Three",
-                "supportRole": {
-                    "tier_type": "SUPPORT",
-                    "role_name": None,
-                    "user_id": None,
-                    "email_id": "support_agent@example.com",
-                    "name": None,
-                    "phone_num": None,
-                    "manager_email_id": None,
-                }
-            }
-        }
-        res = self.scraper.get_seller_details("ID003")
-        self.assertEqual(res["support_manager"], "Yes")
 
     def test_null_and_missing_handling(self):
         self.mock_client.get.return_value = {"result": None}
         res = self.scraper.get_seller_details("ID004")
         self.assertEqual(res["customer_id"], "ID004")
         self.assertEqual(res["account_name"], "")
+        self.assertEqual(res["account_status"], "")
         self.assertEqual(res["support_manager"], "No")
         self.assertEqual(res["seller_tier"], "")
         self.assertEqual(res["signed_up_date"], "")
@@ -121,97 +112,47 @@ class TestAPI2Scraper(unittest.TestCase):
         self.mock_client = MagicMock(spec=APIClient)
         self.scraper = API2Scraper(self.mock_client)
 
-    def test_brand_rule_more_than_12_is_possibly_a_brand(self):
-        # 13 listings of "IGRIM", 7 listings of "OTHER" = 20 total
-        mock_listings = [
-            {"title": f"Product {i}", "brand": "IGRIM"} for i in range(13)
-        ] + [
-            {"title": f"Other Product {i}", "brand": "OTHER"} for i in range(7)
+    def test_requests_v2_counts(self):
+        self.mock_client.get.return_value = {
+            "ALL": 43,
+            "RESUBMISSION_REQUIRED": 17,
+            "DISAPPROVED": 16,
+            "APPROVAL_PENDING": 0,
+            "APPROVED": 26,
+        }
+        counts = self.scraper.get_approval_counts("00396fe5ddcb4956")
+        self.assertEqual(counts.get("APPROVED"), 26)
+        self.assertEqual(counts.get("ALL"), 43)
+
+    def test_unique_brand_count_case_insensitive_deduplication(self):
+        self.mock_client.get.return_value = {
+            "ALL": 5,
+            "APPROVED": 4,
+        }
+        mock_records = [
+            {"brand_name": "BRAND", "request_status": "Approved"},
+            {"brand_name": "Brand", "request_status": "Approved"},
+            {"brand_name": "bRAND", "request_status": "Approved"},
+            {"brand_name": "OTHER_BRAND", "request_status": "Approved"},
+            {"brand_name": "DISAPPROVED_BRAND", "request_status": "Disapproved"},
         ]
+        self.mock_client.post.return_value = mock_records
 
-        self.mock_client.post.return_value = {
-            "listing_data_response": mock_listings
+        res = self.scraper.get_brand_approval_details("00396fe5ddcb4956")
+        self.assertEqual(res["approved_brand"], 4)
+        # "BRAND", "Brand", "bRAND" deduplicate to 1, plus "OTHER_BRAND" = 2 unique approved brands
+        self.assertEqual(res["actual_brand_count"], 2)
+        self.assertIn("brand", res["unique_brands"])
+        self.assertIn("other_brand", res["unique_brands"])
+
+    def test_zero_approved_brands(self):
+        self.mock_client.get.return_value = {
+            "ALL": 0,
+            "APPROVED": 0,
         }
-
-        res = self.scraper.get_listings_and_brand("ID001")
-        self.assertEqual(len(res["listing_titles"]), 20)
-        self.assertEqual(res["is_brand"], "Possibly a Brand")
-        self.assertEqual(res["brand_name"], "IGRIM")
-
-    def test_brand_rule_exactly_12_is_possibly_a_seller(self):
-        # Exactly 12 of "IGRIM" (does NOT satisfy strictly > 12)
-        mock_listings = [
-            {"title": f"Product {i}", "brand": "IGRIM"} for i in range(12)
-        ] + [
-            {"title": f"Other Product {i}", "brand": "OTHER"} for i in range(8)
-        ]
-
-        self.mock_client.post.return_value = {
-            "listing_data_response": mock_listings
-        }
-
-        res = self.scraper.get_listings_and_brand("ID002")
-        self.assertEqual(len(res["listing_titles"]), 20)
-        self.assertEqual(res["is_brand"], "Possibly a Seller")
-        self.assertEqual(res["brand_name"], "")
-
-    def test_brand_rule_distributed_brands_is_possibly_a_seller(self):
-        # 20 different brands
-        mock_listings = [
-            {"title": f"Product {i}", "brand": f"BRAND_{i}"} for i in range(20)
-        ]
-        self.mock_client.post.return_value = {
-            "listing_data_response": mock_listings
-        }
-        res = self.scraper.get_listings_and_brand("ID003")
-        self.assertEqual(res["is_brand"], "Possibly a Seller")
-        self.assertEqual(res["brand_name"], "")
-
-    def test_fewer_than_20_listings(self):
-        # Only 5 listings returned
-        mock_listings = [
-            {"title": f"Item {i}", "brand": "TEST_BRAND"} for i in range(5)
-        ]
-        self.mock_client.post.return_value = {
-            "result": {"listing_data_response": mock_listings}
-        }
-        res = self.scraper.get_listings_and_brand("ID004")
-        self.assertEqual(len(res["listing_titles"]), 5)
-        # 5 is not > 12 -> Possibly a Seller
-        self.assertEqual(res["is_brand"], "Possibly a Seller")
-        self.assertEqual(res["brand_name"], "")
-
-    def test_graphql_response_parsing(self):
-        mock_data = {
-            "data": {
-                "listingsManagementMetrics": {
-                    "listingRows": {
-                        "count": 100,
-                        "listingDataResponse": [
-                            {
-                                "title": f"Shoe {i}",
-                                "brand": "NIKE",
-                                "view": {"title": f"Shoe {i}", "brand": "NIKE"}
-                            }
-                            for i in range(15)
-                        ] + [
-                            {
-                                "title": f"Puma {i}",
-                                "brand": "PUMA",
-                                "view": {"title": f"Puma {i}", "brand": "PUMA"}
-                            }
-                            for i in range(5)
-                        ]
-                    }
-                }
-            }
-        }
-        self.mock_client.post.return_value = mock_data
-        res = self.scraper.get_listings_and_brand("ID_GQL")
-        self.assertEqual(len(res["listing_titles"]), 20)
-        self.assertEqual(len(res["listing_brands"]), 20)
-        self.assertEqual(res["is_brand"], "Possibly a Brand")
-        self.assertEqual(res["brand_name"], "NIKE")
+        res = self.scraper.get_brand_approval_details("ID_ZERO")
+        self.assertEqual(res["approved_brand"], 0)
+        self.assertEqual(res["actual_brand_count"], 0)
 
 
 class TestAPI3Scraper(unittest.TestCase):
@@ -235,9 +176,9 @@ class TestAPI3Scraper(unittest.TestCase):
         res = self.scraper.get_seller_contacts("ID001")
         self.assertEqual(res["customer_id"], "ID001")
         self.assertEqual(res["mobile_number"], "+919717321982")
-        self.assertEqual(res["registered_mobile_number"], "+919999354199")  # from profileInfo.mobile_number
+        self.assertEqual(res["registered_mobile_number"], "+919999354199")
         self.assertEqual(res["email_id"], "slowlorisstore@gmail.com")
-        self.assertEqual(res["registered_email_id"], "profile_email@example.com")  # from profileInfo.email_id
+        self.assertEqual(res["registered_email_id"], "profile_email@example.com")
 
     def test_get_seller_contacts_null_values(self):
         self.mock_client.get.return_value = {
