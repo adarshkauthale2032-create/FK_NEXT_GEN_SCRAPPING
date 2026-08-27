@@ -1,198 +1,80 @@
 """
-Excel and CSV Writer module.
+CSV Writer module (formerly Excel Writer).
 
-Handles creation, continuous appending, styling, locked file detection,
-retry recovery, atomic corruption-proof saving, and automated 1,000-record batch/chunk
-splitting for both Excel (.xlsx) and CSV (.csv) output files.
+Handles creation, continuous appending, locked file detection,
+retry recovery, and durable persistence for the scraped output CSV dataset.
 """
 
 import csv
-from datetime import datetime
 import json
 import logging
 import os
 from pathlib import Path
-import shutil
 import time
 from typing import Any, Dict, List, Optional, Set
-import zipfile
-import openpyxl
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
 
 from config.settings import (
-    CHUNK_SIZE,
-    EXCEL_COLUMNS,
-    EXCEL_RETRY_INTERVAL,
-    MAX_EXCEL_LOCK_RETRIES,
-    OUTPUT_DIR,
-    OUTPUT_EXCEL_PATH,
+    CSV_COLUMNS,
+    CSV_RETRY_INTERVAL,
+    MAX_CSV_LOCK_RETRIES,
+    OUTPUT_CSV_PATH,
     PENDING_FILE_PATH,
 )
 
 logger = logging.getLogger("customer_scraper")
 
 
-class ExcelWriter:
+class CSVWriter:
     """
-    Manages writing scraped customer records to Excel and CSV files with
-    atomic corruption protection, automatic 1000-record chunking, and file-lock recovery.
+    Manages writing scraped customer records to CSV with file-lock recovery.
     """
 
     def __init__(
         self,
-        excel_path: Optional[Path] = None,
+        csv_path: Optional[Path] = None,
         pending_path: Optional[Path] = None,
         chunk_size: int = CHUNK_SIZE,
         output_dir: Optional[Path] = None,
     ):
-        self.explicit_excel_path = excel_path
-        self.output_dir = output_dir or OUTPUT_DIR
-        self.chunk_size = chunk_size or CHUNK_SIZE
-        self.pending_path = pending_path or PENDING_FILE_PATH
+        self.csv_path = Path(csv_path or OUTPUT_CSV_PATH)
+        self.pending_path = Path(pending_path or PENDING_FILE_PATH)
+        self._ensure_file_exists()
 
-        if self.explicit_excel_path:
-            self._ensure_workbook_exists(self.explicit_excel_path)
-
-    def get_excel_path_for_sr(self, sr_no: Any) -> Path:
+    def _ensure_file_exists(self) -> None:
         """
-        Calculates the chunked Excel file path for a given sequential Sr No.
-        For instance:
-          sr_no 1 to 1000     -> output/scraped_data_1_to_1000.xlsx
-          sr_no 1001 to 2000 -> output/scraped_data_1001_to_2000.xlsx
-          sr_no 2001 to 3000 -> output/scraped_data_2001_to_3000.xlsx
+        Creates the target CSV file with formatted headers if it doesn't exist.
         """
-        if self.explicit_excel_path is not None:
-            return self.explicit_excel_path
-
-        try:
-            sr_int = int(sr_no)
-        except (ValueError, TypeError):
-            sr_int = 1
-        sr_int = max(1, sr_int)
-
-        batch_idx = (sr_int - 1) // self.chunk_size
-        start_sr = batch_idx * self.chunk_size + 1
-        end_sr = (batch_idx + 1) * self.chunk_size
-
-        return self.output_dir / f"scraped_data_{start_sr}_to_{end_sr}.xlsx"
-
-    def get_csv_path_for_sr(self, sr_no: Any) -> Path:
-        """Returns the corresponding CSV path for a given Sr No."""
-        excel_path = self.get_excel_path_for_sr(sr_no)
-        return excel_path.with_suffix(".csv")
-
-    def _create_fresh_workbook(self) -> openpyxl.Workbook:
-        """Creates a styled empty workbook with standardized headers."""
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Scraped Sellers"
-
-        header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
-        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-        header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        thin_border = Border(
-            left=Side(style="thin", color="D9D9D9"),
-            right=Side(style="thin", color="D9D9D9"),
-            top=Side(style="thin", color="D9D9D9"),
-            bottom=Side(style="thin", color="D9D9D9"),
-        )
-
-        ws.append(EXCEL_COLUMNS)
-
-        for col_num, _ in enumerate(EXCEL_COLUMNS, start=1):
-            cell = ws.cell(row=1, column=col_num)
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = header_alignment
-            cell.border = thin_border
-
-        ws.row_dimensions[1].height = 28
-        ws.freeze_panes = "A2"
-        return wb
-
-    def _ensure_workbook_exists(self, excel_path: Optional[Path] = None) -> None:
-        """
-        Creates the target workbook with formatted headers if it doesn't exist
-        or recovers it if found corrupted.
-        """
-        target_path = excel_path or self.explicit_excel_path or self.get_excel_path_for_sr(1)
-        if target_path.exists():
-            # Verify file is not 0 bytes or corrupted zip
-            if target_path.stat().st_size > 0 and zipfile.is_zipfile(target_path):
-                return
-            else:
-                logger.warning("Detected 0-byte or corrupted workbook at %s. Re-initializing...", target_path.name)
-                try:
-                    corrupt_backup = target_path.with_suffix(f".corrupt_{int(time.time())}.bak")
-                    shutil.move(str(target_path), str(corrupt_backup))
-                except Exception:
-                    pass
-
-        logger.info("Initializing new output workbook at %s", target_path.name)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-
-        wb = self._create_fresh_workbook()
-        self._save_workbook_with_retry(wb, target_path)
-
-    def _export_to_csv(self, excel_path: Path, csv_path: Path) -> None:
-        """
-        Exports all rows from the Excel workbook to a UTF-8 CSV file.
-        """
-        if not excel_path.exists() or not zipfile.is_zipfile(excel_path):
+        if self.csv_path.exists():
             return
 
-        wb = None
+        logger.info("Initializing new CSV file at %s", self.csv_path)
+        self.csv_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            wb = openpyxl.load_workbook(excel_path, data_only=True)
-            ws = wb.active
-            csv_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_csv = csv_path.with_suffix(".csv.tmp")
-            with open(tmp_csv, "w", newline="", encoding="utf-8-sig") as f:
+            with open(self.csv_path, "w", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f)
-                for row in ws.iter_rows(values_only=True):
-                    cleaned_row = ["" if v is None else str(v) for v in row]
-                    writer.writerow(cleaned_row)
-            if tmp_csv.exists():
-                os.replace(tmp_csv, csv_path)
-            logger.debug("CSV export updated at %s", csv_path.name)
+                writer.writerow(CSV_COLUMNS)
         except Exception as e:
-            logger.warning("Could not export CSV to %s: %s", csv_path.name, str(e))
-        finally:
-            if wb:
-                try:
-                    wb.close()
-                except Exception:
-                    pass
+            logger.error("Failed to initialize CSV file (%s): %s", self.csv_path, str(e))
 
-    def _save_workbook_with_retry(self, wb: openpyxl.Workbook, target_path: Optional[Path] = None) -> bool:
+    def _append_rows_with_retry(self, rows: List[List[Any]]) -> bool:
         """
-        Saves the workbook atomically with automatic retries if locked by another application (e.g. MS Excel).
-        Uses a temporary file and atomic swap to completely prevent .xlsx archive corruption.
+        Appends rows to the CSV file with automatic retries if locked (e.g., opened in Excel).
         """
-        save_path = target_path or self.explicit_excel_path or self.get_excel_path_for_sr(1)
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_save_path = save_path.with_suffix(f".tmp_{os.getpid()}_{int(time.time()*1000)}.xlsx")
+        if not rows:
+            return True
 
         retries = 0
-        while retries < MAX_EXCEL_LOCK_RETRIES:
+        while retries < MAX_CSV_LOCK_RETRIES:
             try:
-                # 1. Save to temp file first
-                wb.save(tmp_save_path)
+                # Ensure parent directory and header exist
+                self._ensure_file_exists()
 
-                # 2. Verify temp file integrity
-                if tmp_save_path.exists() and tmp_save_path.stat().st_size > 0 and zipfile.is_zipfile(tmp_save_path):
-                    # 3. Atomically replace target file
-                    os.replace(tmp_save_path, save_path)
-                    logger.debug("Excel workbook saved atomically at %s", save_path.name)
-
-                    # 4. Sync CSV
-                    csv_path = save_path.with_suffix(".csv")
-                    self._export_to_csv(save_path, csv_path)
-                    return True
-                else:
-                    raise IOError("Temp workbook failed integrity validation.")
-
+                with open(self.csv_path, "a", newline="", encoding="utf-8-sig") as f:
+                    writer = csv.writer(f)
+                    for row in rows:
+                        writer.writerow(row)
+                logger.debug("Successfully appended %d row(s) to %s", len(rows), self.csv_path.name)
+                return True
             except (PermissionError, OSError) as lock_err:
                 retries += 1
                 if tmp_save_path.exists():
@@ -202,32 +84,17 @@ class ExcelWriter:
                         pass
 
                 logger.warning(
-                    "Excel file '%s' is locked (likely open in Excel). Save attempt %d/%d failed. Retrying in %ds... Please close the file if open.",
-                    save_path.name,
+                    "CSV file '%s' is locked (likely open in Excel). Save attempt %d/%d failed. Retrying in %ds... Please close the file if open.",
+                    self.csv_path.name,
                     retries,
-                    MAX_EXCEL_LOCK_RETRIES,
-                    EXCEL_RETRY_INTERVAL,
+                    MAX_CSV_LOCK_RETRIES,
+                    CSV_RETRY_INTERVAL,
                 )
-                time.sleep(EXCEL_RETRY_INTERVAL)
-            except Exception as e:
-                logger.error("Unexpected error saving workbook %s: %s", save_path.name, str(e))
-                if tmp_save_path.exists():
-                    try:
-                        tmp_save_path.unlink()
-                    except Exception:
-                        pass
-                return False
-            finally:
-                if tmp_save_path.exists():
-                    try:
-                        tmp_save_path.unlink()
-                    except Exception:
-                        pass
+                time.sleep(CSV_RETRY_INTERVAL)
 
         logger.error(
-            "Failed to save Excel file %s after %d attempts. Workbook lock could not be released.",
-            save_path.name,
-            MAX_EXCEL_LOCK_RETRIES
+            "Failed to save CSV file after %d attempts. File lock could not be released.",
+            MAX_CSV_LOCK_RETRIES,
         )
         return False
 
@@ -285,8 +152,8 @@ class ExcelWriter:
         Persists pending customer records to disk.
         """
         try:
-            tmp_path = self.pending_path.with_suffix(".tmp")
-            with open(tmp_path, "w", encoding="utf-8") as f:
+            self.pending_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.pending_path, "w", encoding="utf-8") as f:
                 json.dump(pending_list, f, indent=2)
             os.replace(tmp_path, self.pending_path)
         except Exception as e:
@@ -294,7 +161,7 @@ class ExcelWriter:
 
     def clear_pending_records(self) -> None:
         """
-        Clears pending records file upon successful persistence to Excel.
+        Clears pending records file upon successful persistence to CSV.
         """
         if self.pending_path.exists():
             try:
@@ -319,7 +186,7 @@ class ExcelWriter:
 
     def _format_customer_rows(self, data: Dict[str, Any], sr_no: Any) -> List[List[Any]]:
         """
-        Formats customer scraped data into one or more Excel row lists.
+        Formats customer scraped data into one or more CSV row lists.
         """
         customer_id = data.get("customer_id", "")
         account_name = data.get("account_name", "")
@@ -422,24 +289,23 @@ class ExcelWriter:
 
     def append_customer(self, customer_data: Dict[str, Any], sr_no: Any) -> bool:
         """
-        Appends a single customer's scraped data to the appropriate Excel/CSV batch file.
-        If file is locked, buffers record to pending_results.json and retries.
+        Appends a single customer's scraped data to CSV.
+        If CSV is locked, buffers record to pending_results.json and retries.
 
         Returns:
-            True if written and saved to Excel & CSV successfully, False otherwise.
+            True if written and saved to CSV successfully, False otherwise.
         """
-        target_excel = self.get_excel_path_for_sr(sr_no)
-        self._ensure_workbook_exists(target_excel)
+        self._ensure_file_exists()
 
         # Add this record with its sr_no to pending queue first for safety
         pending = self.load_pending_records()
         pending.append({"sr_no": sr_no, "data": customer_data})
         self.save_pending_records(pending)
 
-        # Attempt to flush all pending records to Excel & CSV
+        # Attempt to flush all pending records to CSV
         success = self.flush_pending()
         if success:
-            logger.debug("Saved record %s to %s", str(sr_no), target_excel.name)
+            logger.info("CSV saved successfully for customer ID: %s", customer_data.get("customer_id"))
         else:
             logger.warning("Pending save queued for record %s (%s)", str(sr_no), customer_data.get("customer_id"))
 
@@ -447,153 +313,61 @@ class ExcelWriter:
 
     def flush_pending(self) -> bool:
         """
-        Attempts to write all buffered pending records to their respective Excel/CSV batch files.
-        Guarantees all openpyxl workbook handles are closed cleanly to avoid Windows locks.
+        Attempts to write all buffered pending records to CSV.
         """
         pending = self.load_pending_records()
         if not pending:
             return True
 
-        # Group pending records by target file path
-        by_file: Dict[Path, List[Dict[str, Any]]] = {}
+        all_rows_to_append = []
         for item in pending:
-            sr = item.get("sr_no", 1)
-            path = self.get_excel_path_for_sr(sr)
-            if path not in by_file:
-                by_file[path] = []
-            by_file[path].append(item)
+            item_sr = item.get("sr_no")
+            item_data = item.get("data", {})
+            rows_to_add = self._format_customer_rows(item_data, item_sr)
+            all_rows_to_append.extend(rows_to_add)
 
-        all_saved = True
-        saved_items: List[Dict[str, Any]] = []
-
-        for file_path, items in by_file.items():
-            wb = self._load_workbook_safe(file_path)
-            if wb is None:
-                all_saved = False
-                continue
-
-            try:
-                ws = wb.active
-
-                cell_font = Font(name="Calibri", size=10)
-                center_align = Alignment(horizontal="center", vertical="center")
-                left_align = Alignment(horizontal="left", vertical="center")
-                thin_border = Border(
-                    left=Side(style="thin", color="E0E0E0"),
-                    right=Side(style="thin", color="E0E0E0"),
-                    top=Side(style="thin", color="E0E0E0"),
-                    bottom=Side(style="thin", color="E0E0E0"),
-                )
-
-                for item in items:
-                    item_sr = item.get("sr_no")
-                    item_data = item.get("data", {})
-                    rows_to_add = self._format_customer_rows(item_data, item_sr)
-
-                    for row_vals in rows_to_add:
-                        ws.append(row_vals)
-                        row_idx = ws.max_row
-                        ws.row_dimensions[row_idx].height = 20
-
-                        for col_idx in range(1, len(row_vals) + 1):
-                            cell = ws.cell(row=row_idx, column=col_idx)
-                            cell.font = cell_font
-                            cell.border = thin_border
-                            if col_idx in (1, 2, 4, 5, 6, 7, 9, 10, 11, 12, 13):
-                                cell.alignment = center_align
-                            else:
-                                cell.alignment = left_align
-
-                # Adjust column widths automatically
-                for col in ws.columns:
-                    col_letter = get_column_letter(col[0].column)
-                    max_len = 0
-                    for cell in col:
-                        val_str = str(cell.value or "")
-                        if len(val_str) > max_len:
-                            max_len = len(val_str)
-                    ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
-
-                saved = self._save_workbook_with_retry(wb, file_path)
-                if saved:
-                    saved_items.extend(items)
-                else:
-                    all_saved = False
-
-            except Exception as ex:
-                logger.error("Error writing rows to workbook %s: %s", file_path.name, str(ex))
-                all_saved = False
-            finally:
-                try:
-                    wb.close()
-                except Exception:
-                    pass
-
-        if saved_items:
-            remaining = [it for it in pending if it not in saved_items]
-            if remaining:
-                self.save_pending_records(remaining)
-            else:
-                self.clear_pending_records()
+        saved = self._append_rows_with_retry(all_rows_to_append)
+        if saved:
+            self.clear_pending_records()
+            return True
 
         return all_saved
 
     def get_completed_customer_ids(self) -> Set[str]:
         """
-        Extracts all unique customer IDs that have already been persisted
-        across all batch Excel (.xlsx) and CSV (.csv) files in the output directory.
+        Extracts all unique customer IDs that have already been persisted to the CSV file.
         """
+        if not self.csv_path.exists():
+            return set()
+
         completed_ids: Set[str] = set()
+        try:
+            with open(self.csv_path, "r", newline="", encoding="utf-8-sig") as f:
+                reader = csv.reader(f)
+                header = next(reader, None)
+                cust_col_idx = 1
+                if header:
+                    for i, col in enumerate(header):
+                        if col.strip().lower() in ("customer id", "customer_id"):
+                            cust_col_idx = i
+                            break
 
-        if self.explicit_excel_path is not None:
-            files_to_check = [self.explicit_excel_path] if self.explicit_excel_path.exists() else []
-        else:
-            files_to_check = list(self.output_dir.glob("scraped_data*.xlsx"))
-
-        # 1. Scan Excel files
-        for f_path in files_to_check:
-            if not f_path.exists() or f_path.stat().st_size == 0 or not zipfile.is_zipfile(f_path) or ".tmp" in f_path.name:
-                continue
-
-            wb = None
-            try:
-                wb = openpyxl.load_workbook(f_path, read_only=True)
-                ws = wb.active
-                for row in ws.iter_rows(min_row=2, values_only=True):
-                    if row and len(row) > 1 and row[1]:
-                        c_id = str(row[1]).strip()
-                        if c_id and c_id.lower() not in ("customer id", "none", ""):
+                for row in reader:
+                    if row and len(row) > cust_col_idx:
+                        c_id = str(row[cust_col_idx]).strip()
+                        if c_id and c_id.lower() not in ("customer id", "customer_id", "none", ""):
                             completed_ids.add(c_id)
-            except Exception as e:
-                logger.error("Could not read completed IDs from %s: %s", f_path.name, str(e))
-            finally:
-                if wb:
-                    try:
-                        wb.close()
-                    except Exception:
-                        pass
-
-        # 2. Scan CSV files for any additional completed IDs
-        csv_files = list(self.output_dir.glob("scraped_data*.csv")) if self.explicit_excel_path is None else []
-        for csv_path in csv_files:
-            if not csv_path.exists() or csv_path.stat().st_size == 0 or ".tmp" in csv_path.name:
-                continue
-            try:
-                with open(csv_path, "r", encoding="utf-8-sig", errors="ignore") as f:
-                    reader = csv.reader(f)
-                    header = next(reader, None)  # Skip header row
-                    for row in reader:
-                        if row and len(row) > 1 and row[1]:
-                            c_id = str(row[1]).strip()
-                            if c_id and c_id.lower() not in ("customer id", "none", ""):
-                                completed_ids.add(c_id)
-            except Exception as e:
-                logger.error("Could not read completed IDs from CSV %s: %s", csv_path.name, str(e))
+        except Exception as e:
+            logger.error("Could not read completed IDs from CSV (%s): %s", self.csv_path, str(e))
 
         return completed_ids
 
     def get_current_customer_count(self) -> int:
         """
-        Returns the total number of unique completed customers across all batch files.
+        Returns the number of unique completed customers already present in the CSV file.
         """
         return len(self.get_completed_customer_ids())
+
+
+# Backward-compatible alias
+ExcelWriter = CSVWriter

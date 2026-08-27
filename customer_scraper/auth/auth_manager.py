@@ -2,7 +2,7 @@
 Session and Authentication Manager.
 
 Manages HTTP sessions, headers, cookies, token refresh workflows,
-and auth expiry detection without hard-coding sensitive credentials.
+and auth expiry detection with Playwright CDP session recovery.
 """
 
 import json
@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import requests
 
-from config.settings import SESSION_CONFIG_PATH
+from config.settings import BASE_URL, REFRESH_INTERVAL, SESSION_CONFIG_PATH
+from auth.playwright_session import PlaywrightSessionHandler
 
 logger = logging.getLogger("customer_scraper")
 
@@ -25,31 +26,58 @@ class AuthExpiredError(Exception):
 
 class AuthManager:
     """
-    Handles authentication state, cookies, headers, and session lifecycles.
+    Handles authentication state, cookies, headers, and session lifecycles
+    using requests.Session and Playwright CDP browser session extraction.
     """
 
-    def __init__(self, session_path: Optional[Path] = None):
-        self.session_path = session_path or SESSION_CONFIG_PATH
+    def __init__(
+        self,
+        session_path: Optional[Path] = None,
+        base_url: Optional[str] = None,
+        refresh_interval: int = REFRESH_INTERVAL,
+    ):
+        self.session_path = Path(session_path or SESSION_CONFIG_PATH)
+        self.base_url = base_url or BASE_URL
         self.session = requests.Session()
         self.cookies: Dict[str, str] = {}
         self.headers: Dict[str, str] = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/122.0.0.0 Safari/537.36"
+                "Chrome/151.0.0.0 Safari/537.36"
             ),
-            "Accept": "application/json, text/plain, */*",
+            "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive",
+            "Content-Type": "application/json",
+            "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
+            "Referer": "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html",
+            "operation": "query",
+            "operation-name": "GetListingRows",
+            "x-internal-env-type": "WEB",
+            "x-marketplace-context": "ALL",
+            "x-requested-with": "XMLHttpRequest",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "sec-ch-ua": '"Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
         }
+        self.playwright_handler = PlaywrightSessionHandler(
+            session_file=self.session_path,
+            refresh_interval=refresh_interval,
+        )
         self.load_session()
 
     def load_session(self) -> bool:
         """
-        Loads cookies and headers from the configuration file or environment.
+        Loads cookies and headers from the session configuration file.
+        If file is missing, attempts extracting from opened Chrome browser via CDP.
         """
         loaded = False
 
-        # Try loading from session JSON file
+        # 1. Try loading from cached session JSON file
         if self.session_path.exists():
             try:
                 with open(self.session_path, "r", encoding="utf-8") as f:
@@ -57,53 +85,106 @@ class AuthManager:
                     file_cookies = data.get("cookies", {})
                     file_headers = data.get("headers", {})
 
-                    if file_cookies:
+                    if file_cookies and isinstance(file_cookies, dict) and len(file_cookies) > 0:
                         self.cookies.update(file_cookies)
                         self.session.cookies.update(file_cookies)
-                    if file_headers:
+                        loaded = True
+
+                    if file_headers and isinstance(file_headers, dict):
                         self.headers.update(file_headers)
                         self.session.headers.update(file_headers)
 
-                    # Automatically ensure FK-CSRF-TOKEN header is set if present in cookies
+                    # Ensure FK-CSRF-TOKEN header is set if present in cookies
                     if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies and "FK-CSRF-TOKEN" not in self.headers:
                         csrf_val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
                         self.headers["FK-CSRF-TOKEN"] = csrf_val
+                        self.headers["fk-csrf-token"] = csrf_val
                         self.session.headers["FK-CSRF-TOKEN"] = csrf_val
+                        self.session.headers["fk-csrf-token"] = csrf_val
 
-                    loaded = True
-                    logger.info("Session configuration successfully loaded from %s", self.session_path.name)
+                    if loaded:
+                        logger.info("Session configuration successfully loaded from %s (%d cookies, %d headers)", self.session_path.name, len(self.cookies), len(self.headers))
             except Exception as e:
-                logger.error("Failed to read session file (%s): %s", self.session_path, str(e))
+                logger.debug("Failed to read session file (%s): %s", self.session_path, str(e))
 
-        # Check environment variables as fallback
-        env_cookie = os.environ.get("FLIPKART_COOKIE")
-        if env_cookie:
-            self.set_cookie_string(env_cookie)
-            loaded = True
-            logger.info("Session cookies loaded from environment variable FLIPKART_COOKIE")
-
-        # Fallback: Attempt automatic extraction from local Chrome profile on Windows
+        # 2. Check environment variables as fallback
         if not loaded:
-            try:
-                from auth.chrome_session import extract_cookies_from_chrome_db
-                auto_cookies = extract_cookies_from_chrome_db()
-                if auto_cookies:
-                    self.cookies.update(auto_cookies)
-                    self.session.cookies.update(auto_cookies)
-                    loaded = True
-                    logger.info("Auto-detected %d session cookies directly from Google Chrome profile!", len(auto_cookies))
-                    # Save to session.json so future runs have it cached
-                    self._save_to_file()
-            except Exception as e:
-                logger.debug("Chrome cookie auto-extraction skipped: %s", str(e))
-
-        if not loaded:
-            logger.warning(
-                "No session configuration found at %s. Please populate it with valid browser session credentials.",
-                self.session_path
-            )
+            env_cookie = os.environ.get("FLIPKART_COOKIE")
+            if env_cookie:
+                self.set_cookie_string(env_cookie)
+                loaded = True
+                logger.info("Session cookies loaded from environment variable FLIPKART_COOKIE")
 
         return loaded
+
+    def refresh_session(self, seller_id: Optional[str] = None) -> bool:
+        """
+        Refreshes session when expired by:
+        1. Connecting to Chrome via CDP.
+        2. Refreshing the dynamic Flipkart page (https://suv-flipkart.seller-support.fkcloud.it/#app/seller/{seller_id}/info).
+        3. Intercepting automatic API requests for headers (including FK-CSRF-TOKEN) and extracting cookies.
+        4. Updating session.json and internal requests session.
+        """
+        logger.info("[AUTH] Session expired. Initiating browser refresh & session re-extraction (Seller ID: %s)...", seller_id or "default")
+
+        try:
+            session_data = self.playwright_handler.refresh_and_extract_session(seller_id=seller_id)
+            if session_data:
+                new_cookies = session_data.get("cookies", {})
+                new_headers = session_data.get("headers", {})
+
+                if new_cookies:
+                    self.cookies.update(new_cookies)
+                    self.session.cookies.update(new_cookies)
+
+                if new_headers:
+                    self.headers.update(new_headers)
+                    self.session.headers.update(new_headers)
+
+                # Ensure CSRF token header
+                if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies and "FK-CSRF-TOKEN" not in self.headers:
+                    csrf_val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
+                    self.headers["FK-CSRF-TOKEN"] = csrf_val
+                    self.headers["fk-csrf-token"] = csrf_val
+                    self.session.headers["FK-CSRF-TOKEN"] = csrf_val
+                    self.session.headers["fk-csrf-token"] = csrf_val
+
+                logger.info("[AUTH] Session successfully refreshed and updated in memory.")
+                return True
+        except Exception as e:
+            logger.error("[AUTH] CDP session refresh failed: %s", str(e))
+
+        # Fallback: interactive manual entry if terminal available
+        if sys.stdin.isatty():
+            print("\n" + "=" * 65)
+            print("  AUTHENTICATION FALLBACK:")
+            print("  Paste updated 'Cookie' header string below (or Press Enter to abort):")
+            print("=" * 65)
+            try:
+                user_input = input("Cookie Header: ").strip()
+                if user_input:
+                    self.set_cookie_string(user_input)
+                    self._save_to_file()
+                    logger.info("Session updated from manual cookie input.")
+                    return True
+            except (EOFError, KeyboardInterrupt):
+                raise AuthExpiredError("User aborted session authentication prompt.")
+
+        raise AuthExpiredError(
+            f"Authentication failed. Please ensure Chrome is open with debugging port (http://127.0.0.1:9222) and you are logged into Flipkart, then update {self.session_path}."
+        )
+
+    def start_keepalive_refresher(self, seller_id: Optional[str] = None) -> None:
+        """
+        Starts the background 10-minute tab refresh loop.
+        """
+        self.playwright_handler.start_keepalive_thread(seller_id=seller_id)
+
+    def stop_keepalive_refresher(self) -> None:
+        """
+        Stops the background 10-minute tab refresh loop.
+        """
+        self.playwright_handler.stop_keepalive_thread()
 
     def _save_to_file(self) -> None:
         """Saves current cookies and headers to session.json."""
@@ -111,7 +192,7 @@ class AuthManager:
             data = {"cookies": self.cookies, "headers": self.headers}
             self.session_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.session_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+                json.dump(data, f, indent=4, ensure_ascii=False)
             logger.info("Saved active session configuration to %s", self.session_path.name)
         except Exception as e:
             logger.error("Failed to save session configuration: %s", str(e))
@@ -133,9 +214,7 @@ class AuthManager:
         return False
 
     def set_cookie_string(self, cookie_string: str) -> None:
-        """
-        Parses a standard Cookie header string into the session.
-        """
+        """Parses a standard Cookie header string into the session."""
         cookies_dict = {}
         for item in cookie_string.split(";"):
             if "=" in item:
@@ -145,16 +224,12 @@ class AuthManager:
         self.session.cookies.update(cookies_dict)
 
     def set_headers(self, headers_dict: Dict[str, str]) -> None:
-        """
-        Updates session headers.
-        """
+        """Updates session headers."""
         self.headers.update(headers_dict)
         self.session.headers.update(headers_dict)
 
     def get_session(self) -> requests.Session:
-        """
-        Returns the active, configured requests Session.
-        """
+        """Returns the active, configured requests Session."""
         return self.session
 
     def is_session_expired(self, response: requests.Response) -> bool:
@@ -199,43 +274,3 @@ class AuthManager:
                 pass
 
         return False
-
-    def refresh_session(self) -> bool:
-        """
-        Attempts to reload and re-establish the session.
-        If running interactively, prompts the user to refresh session.json.
-        """
-        logger.info("Session expired or invalid. Attempting session refresh...")
-
-        # Re-read session file from disk
-        if self.session_path.exists():
-            success = self.load_session()
-            if success:
-                logger.info("Session refreshed from disk configuration.")
-                return True
-
-        # In interactive terminal mode, offer user to update credentials
-        if sys.stdin.isatty():
-            print("\n" + "=" * 60)
-            print("AUTHENTICATION REQUIRED:")
-            print(f"Please update your active session cookies in: {self.session_path}")
-            print("Or paste updated 'Cookie' header string below (Press Enter to continue):")
-            print("=" * 60)
-            try:
-                user_input = input("Cookie Header / Press Enter to reload from file: ").strip()
-                if user_input:
-                    self.set_cookie_string(user_input)
-                    # Save to file
-                    data = {"cookies": self.cookies, "headers": self.headers}
-                    with open(self.session_path, "w", encoding="utf-8") as f:
-                        json.dump(data, f, indent=2)
-                    logger.info("Session updated and saved to %s", self.session_path.name)
-                    return True
-                else:
-                    return self.load_session()
-            except (EOFError, KeyboardInterrupt):
-                raise AuthExpiredError("User aborted session authentication prompt.")
-
-        raise AuthExpiredError(
-            f"Authentication failed. Please update valid session cookies in {self.session_path} and restart."
-        )
