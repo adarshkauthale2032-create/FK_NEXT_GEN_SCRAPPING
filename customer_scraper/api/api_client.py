@@ -74,6 +74,16 @@ class APIClient:
             if headers:
                 req_headers.update(headers)
 
+            # Dynamically inject freshest CSRF token from auth_manager on every request/retry
+            current_csrf = (
+                self.auth_manager.headers.get("FK-CSRF-TOKEN")
+                or self.auth_manager.headers.get("fk-csrf-token")
+                or self.auth_manager.cookies.get("XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h")
+            )
+            if current_csrf:
+                req_headers["FK-CSRF-TOKEN"] = current_csrf
+                req_headers["fk-csrf-token"] = current_csrf
+
             retry_count = 0
             while retry_count < MAX_REQUEST_RETRIES:
                 try:

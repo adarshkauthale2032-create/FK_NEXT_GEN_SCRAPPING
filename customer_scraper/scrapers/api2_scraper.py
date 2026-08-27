@@ -87,23 +87,12 @@ class API2Scraper:
 
         endpoint = API2_REQUESTS_ENDPOINT.format(customer_id=customer_id)
 
-        # Retrieve CSRF token
-        csrf_token = (
-            self.api_client.auth_manager.headers.get("FK-CSRF-TOKEN")
-            or self.api_client.auth_manager.headers.get("fk-csrf-token")
-            or self.api_client.auth_manager.cookies.get("XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h")
-            or ""
-        )
-
         headers = {
             "Accept": "*/*",
             "Content-Type": "application/json",
             "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
             "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}",
         }
-        if csrf_token:
-            headers["FK-CSRF-TOKEN"] = csrf_token
-            headers["fk-csrf-token"] = csrf_token
 
         # Determine optimal page size (requesting full approved count or at least 10)
         requested_page_size = max(approved_count, 10)

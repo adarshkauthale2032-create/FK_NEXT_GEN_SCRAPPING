@@ -232,46 +232,72 @@ class PlaywrightSessionHandler:
             context.on("request", handle_request)
 
             # ------------------------------------------------------------
-            # Find Existing Flipkart Tab or Create One
+            # Step 1: Detect Open Tabs for Tab 1 (Seller Info) & Tab 2 (Track Approvals)
             # ------------------------------------------------------------
-            target_page = None
+            tab_info = None
+            tab_approvals = None
+
             for page in context.pages:
                 try:
-                    p_url = page.url
-                    if "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
-                        target_page = page
-                        logger.info("[SESSION] Found existing Flipkart tab: %s", p_url)
-                        break
+                    p_url = page.url.lower()
+                    if "trackapprovalrequest" in p_url or "approval-store" in p_url or "requeststate=" in p_url:
+                        if tab_approvals is None:
+                            tab_approvals = page
+                    elif "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url or "sellerdashboard" in p_url:
+                        if tab_info is None:
+                            tab_info = page
                 except Exception:
                     pass
 
-            if target_page is None:
-                logger.info("[SESSION] Flipkart tab not found. Opening new page: %s", target_approvals_url)
-                target_page = await context.new_page()
-                await target_page.goto(target_approvals_url, wait_until="domcontentloaded")
-                await asyncio.sleep(2)
+            # ------------------------------------------------------------
+            # Step 2: Refresh / Open Tab 1 (Seller Info)
+            # ------------------------------------------------------------
+            if tab_info is None:
+                logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening new tab: %s", target_info_url)
+                tab_info = await context.new_page()
+                await tab_info.goto(target_info_url, wait_until="domcontentloaded")
             else:
-                # First refresh the page as requested
-                logger.info("[SESSION] Refreshing Flipkart page: %s", target_approvals_url)
+                logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Refreshing...", tab_info.url)
                 try:
-                    # Navigate to trackApprovalRequestsV2 URL if current URL differs
-                    if "trackApprovalRequestsV2" not in target_page.url or active_seller_id not in target_page.url:
-                        await target_page.goto(target_approvals_url, wait_until="domcontentloaded")
+                    if active_seller_id not in tab_info.url or "#app/seller" not in tab_info.url:
+                        await tab_info.goto(target_info_url, wait_until="domcontentloaded")
                     else:
-                        await target_page.reload(wait_until="domcontentloaded")
-                except Exception as nav_err:
-                    logger.warning("[SESSION] Page reload error: %s. Retrying goto...", str(nav_err))
-                    await target_page.goto(target_approvals_url, wait_until="domcontentloaded")
+                        await tab_info.reload(wait_until="domcontentloaded")
+                except Exception as ex1:
+                    logger.warning("[SESSION] Tab 1 reload failed (%s). Navigating to target URL...", str(ex1))
+                    await tab_info.goto(target_info_url, wait_until="domcontentloaded")
 
-                # Wait for automatic API calls to trigger
-                await asyncio.sleep(2.5)
+            await asyncio.sleep(1.5)
 
             # ------------------------------------------------------------
-            # Extract All Cookies for fkcloud.it domain
+            # Step 3: Refresh / Open Tab 2 (Track Approvals)
             # ------------------------------------------------------------
-            browser_cookies = await context.cookies(
-                ["https://suv-flipkart.seller-support.fkcloud.it", "https://fkcloud.it"]
-            )
+            if tab_approvals is None or tab_approvals == tab_info:
+                logger.info("[SESSION] Tab 2 (Track Approvals) not open. Opening new tab: %s", target_approvals_url)
+                tab_approvals = await context.new_page()
+                await tab_approvals.goto(target_approvals_url, wait_until="domcontentloaded")
+            else:
+                logger.info("[SESSION] Found Tab 2 (Track Approvals): %s. Refreshing...", tab_approvals.url)
+                try:
+                    if active_seller_id not in tab_approvals.url or "trackApprovalRequestsV2" not in tab_approvals.url:
+                        await tab_approvals.goto(target_approvals_url, wait_until="domcontentloaded")
+                    else:
+                        await tab_approvals.reload(wait_until="domcontentloaded")
+                except Exception as ex2:
+                    logger.warning("[SESSION] Tab 2 reload failed (%s). Navigating to target URL...", str(ex2))
+                    await tab_approvals.goto(target_approvals_url, wait_until="domcontentloaded")
+
+            # Wait for automatic portal API requests to trigger on both tabs
+            await asyncio.sleep(2.5)
+
+            # ------------------------------------------------------------
+            # Step 4: Extract All Cookies for fkcloud.it domain
+            # ------------------------------------------------------------
+            browser_cookies = await context.cookies([
+                "https://suv-flipkart.seller-support.fkcloud.it",
+                "https://fkcloud.it",
+                "https://seller.flipkart.com",
+            ])
 
             for c in browser_cookies:
                 c_name = c.get("name")
@@ -286,9 +312,10 @@ class PlaywrightSessionHandler:
                 captured_headers["fk-csrf-token"] = csrf_val
 
             # Read user-agent from page evaluation if not intercepted
-            if target_page:
+            active_tab = tab_approvals or tab_info
+            if active_tab:
                 try:
-                    ua = await target_page.evaluate("() => navigator.userAgent")
+                    ua = await active_tab.evaluate("() => navigator.userAgent")
                     if ua:
                         captured_headers["User-Agent"] = ua
                 except Exception:
@@ -360,8 +387,8 @@ class PlaywrightSessionHandler:
 
     async def _async_keepalive_loop(self, seller_id: Optional[str] = None):
         """
-        Background keepalive loop: refreshes the Flipkart tab every 10 minutes (600s)
-        WITHOUT extracting or updating session.json.
+        Background keepalive loop: refreshes both Flipkart tabs every 10 minutes (600s)
+        WITHOUT extracting or overwriting session.json.
         """
         try:
             from playwright.async_api import async_playwright
@@ -370,14 +397,16 @@ class PlaywrightSessionHandler:
             return
 
         active_seller_id = str(seller_id).strip() if seller_id else DEFAULT_FALLBACK_SELLER_ID
-        target_url = SELLER_INFO_URL.format(seller_id=active_seller_id)
+        target_info_url = SELLER_INFO_URL.format(seller_id=active_seller_id)
+        target_approvals_url = SELLER_APPROVALS_URL.format(seller_id=active_seller_id)
 
         print()
         print("=" * 70)
-        print("[KEEPALIVE] Flipkart Browser Tab Keep-Alive Monitor Started")
-        print(f"[KEEPALIVE] Target Portal:    {target_url}")
-        print(f"[KEEPALIVE] Refresh Interval: {self.refresh_interval} seconds (10 minutes)")
-        print("[KEEPALIVE] Note: Only reloads page; does not overwrite session.json")
+        print("[KEEPALIVE] Flipkart Dual-Tab Browser Keep-Alive Monitor Started")
+        print(f"[KEEPALIVE] Tab 1 (Seller Info):        {target_info_url}")
+        print(f"[KEEPALIVE] Tab 2 (Track Approvals):    {target_approvals_url}")
+        print(f"[KEEPALIVE] Refresh Interval:           {self.refresh_interval} seconds (10 minutes)")
+        print("[KEEPALIVE] Note: Only reloads pages; does not overwrite session.json")
         print("=" * 70)
         print()
 
@@ -395,33 +424,50 @@ class PlaywrightSessionHandler:
                         continue
 
                     context = browser.contexts[0]
-                    target_page = None
+                    tab_info = None
+                    tab_approvals = None
 
+                    # Detect open tabs
                     for page in context.pages:
                         try:
-                            if "seller-support.fkcloud.it" in page.url or "fkcloud.it" in page.url:
-                                target_page = page
-                                break
+                            p_url = page.url.lower()
+                            if "trackapprovalrequest" in p_url or "approval-store" in p_url:
+                                if tab_approvals is None:
+                                    tab_approvals = page
+                            elif "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
+                                if tab_info is None:
+                                    tab_info = page
                         except Exception:
                             pass
 
-                    if target_page is None or target_page.is_closed():
-                        logger.info("[KEEPALIVE] Opening Flipkart tab at %s...", target_url)
-                        target_page = await context.new_page()
-                        await target_page.goto(target_url, wait_until="domcontentloaded")
+                    # Refresh or open Tab 1
+                    if tab_info is None or tab_info.is_closed():
+                        logger.info("[KEEPALIVE] Opening Tab 1 (Seller Info) at %s...", target_info_url)
+                        tab_info = await context.new_page()
+                        await tab_info.goto(target_info_url, wait_until="domcontentloaded")
                     else:
-                        logger.info("[KEEPALIVE] Periodic 10-minute refresh: %s", target_page.url)
-                        await target_page.reload(wait_until="domcontentloaded")
+                        logger.info("[KEEPALIVE] 10-minute refresh on Tab 1: %s", tab_info.url)
+                        await tab_info.reload(wait_until="domcontentloaded")
 
-                    # Disconnect CDP client cleanly without closing user browser
-                    # Wait for next refresh interval (e.g. 600s), checking stop flag periodically
+                    await asyncio.sleep(1.5)
+
+                    # Refresh or open Tab 2
+                    if tab_approvals is None or tab_approvals.is_closed() or tab_approvals == tab_info:
+                        logger.info("[KEEPALIVE] Opening Tab 2 (Track Approvals) at %s...", target_approvals_url)
+                        tab_approvals = await context.new_page()
+                        await tab_approvals.goto(target_approvals_url, wait_until="domcontentloaded")
+                    else:
+                        logger.info("[KEEPALIVE] 10-minute refresh on Tab 2: %s", tab_approvals.url)
+                        await tab_approvals.reload(wait_until="domcontentloaded")
+
+                    # Wait for next refresh interval, checking stop flag periodically
                     for _ in range(int(self.refresh_interval / 5)):
                         if self._stop_keepalive.is_set():
                             break
                         await asyncio.sleep(5)
 
                 except Exception as e:
-                    logger.debug("[KEEPALIVE] Refresh loop exception: %s", str(e))
+                    logger.debug("[KEEPALIVE] Refresh loop notice: %s", str(e))
                     await asyncio.sleep(10)
 
     def start_keepalive_thread(self, seller_id: Optional[str] = None) -> None:
