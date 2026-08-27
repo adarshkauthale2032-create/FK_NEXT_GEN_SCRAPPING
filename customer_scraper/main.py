@@ -3,7 +3,7 @@ Main Orchestration Script for Customer Scraping Automation.
 
 Processes customer/seller IDs sequentially, calls API #1, #2, #3, evaluates
 business rules, handles authentication refresh via Playwright CDP, maintains a
-10-minute browser tab keepalive refresh, persists output to CSV, and guarantees
+10-minute browser tab keepalive refresh, persists output to Excel and CSV, and guarantees
 resumability and data integrity.
 """
 
@@ -31,6 +31,8 @@ from config.settings import (
     INPUT_COLUMN_NAME,
     LOG_FILE_PATH,
     OUTPUT_CSV_PATH,
+    OUTPUT_DIR,
+    OUTPUT_EXCEL_PATH,
     PROGRESS_FILE_PATH,
     SESSION_CONFIG_PATH,
 )
@@ -117,13 +119,13 @@ class ProgressTracker:
 
     def sync_with_csv(self, csv_ids: Set[str]) -> None:
         """
-        Synchronizes state with completed IDs found in the CSV dataset.
+        Synchronizes state with completed IDs found in the CSV/Excel dataset.
         """
         if csv_ids:
             before_count = len(self.completed_ids)
             self.completed_ids.update(csv_ids)
             if len(self.completed_ids) > before_count:
-                logger.info("Synchronized progress: found %d completed IDs in CSV.", len(self.completed_ids))
+                logger.info("Synchronized progress: found %d completed IDs in output datasets.", len(self.completed_ids))
                 self._save()
 
     # Backward compatibility alias
@@ -308,6 +310,9 @@ def main():
     parser.add_argument("--limit", type=int, default=DEFAULT_SCRAPE_LIMIT, help=f"Number of new seller records to scrape in this session (default: {DEFAULT_SCRAPE_LIMIT})")
     args = parser.parse_args()
 
+    chunk_size = args.chunk_size or CHUNK_SIZE
+    max_limit = args.limit
+
     # 1. Initialize Authentication Manager
     auth_manager = AuthManager(SESSION_CONFIG_PATH)
 
@@ -345,7 +350,7 @@ def main():
     logger.info("START - Customer Scraping Automation")
     logger.info("==========================================")
 
-    # 4. Load Customer IDs
+    # 2. Load Customer IDs
     customer_ids = read_customer_ids(INPUT_FILE_PATH)
     if not customer_ids:
         logger.warning("No customer IDs to process. Please check %s", INPUT_FILE_PATH)
@@ -374,21 +379,21 @@ def main():
     api2 = API2Scraper(api_client)
     api3 = API3Scraper(api_client)
     
-    csv_writer = CSVWriter()
+    excel_writer = ExcelWriter(output_dir=OUTPUT_DIR, chunk_size=chunk_size)
+    csv_writer = excel_writer
     progress_tracker = ProgressTracker()
 
-    # 2. Synchronize progress with existing CSV dataset
-    csv_completed = csv_writer.get_completed_customer_ids()
-    progress_tracker.sync_with_csv(csv_completed)
+    # 3. Synchronize progress with existing CSV / Excel datasets
+    completed_ids = excel_writer.get_completed_customer_ids()
+    progress_tracker.sync_with_csv(completed_ids)
 
-    # 3. Flush any pending unpersisted data if present
-    csv_writer.flush_pending()
+    # 4. Flush any pending unpersisted data if present
+    excel_writer.flush_pending()
 
     # Calculate current sequential Sr No counter
-    current_sr_no = csv_writer.get_current_customer_count() + 1
+    current_sr_no = excel_writer.get_current_customer_count() + 1
 
     total_ids = len(customer_ids)
-    max_limit = args.limit
     processed_in_session = 0
     skipped_count = 0
     failed_count = 0
@@ -426,7 +431,7 @@ def main():
 
                 # Check Support Manager Condition
                 if support_mgr == "Yes":
-                    save_success = csv_writer.append_customer(api1_data, sr_no=current_sr_no)
+                    save_success = excel_writer.append_customer(api1_data, sr_no=current_sr_no)
                     if save_success:
                         progress_tracker.mark_completed(customer_id)
                         logger.info(
@@ -444,7 +449,7 @@ def main():
                             logger.info("🎉 [SESSION COMPLETE] Successfully scraped target of %d sellers in this run. Stopping script cleanly.", max_limit)
                             break
                     else:
-                        logger.error("Failed to persist data to CSV for customer ID: %s", customer_id)
+                        logger.error("Failed to persist data for customer ID: %s", customer_id)
                     continue
 
                 # Step 2: Execute API #2 (GraphQL Listings & Brand Analysis)
@@ -463,8 +468,8 @@ def main():
                     **api3_data,
                 }
 
-                # Step 5: Save to CSV
-                save_success = csv_writer.append_customer(combined_record, sr_no=current_sr_no)
+                # Step 5: Save to Excel and CSV
+                save_success = excel_writer.append_customer(combined_record, sr_no=current_sr_no)
                 if save_success:
                     progress_tracker.mark_completed(customer_id)
                     brand_info = f"{is_brand} ({brand_name})" if brand_name else is_brand
@@ -483,7 +488,7 @@ def main():
                         logger.info("🎉 [SESSION COMPLETE] Successfully scraped target of %d sellers in this run. Stopping script cleanly.", max_limit)
                         break
                 else:
-                    logger.error("Failed to persist data to CSV for customer ID: %s", customer_id)
+                    logger.error("Failed to persist data for customer ID: %s", customer_id)
 
             except AuthExpiredError as auth_err:
                 logger.critical("[ALERT] Authentication expired while processing %s: %s", customer_id, str(auth_err))
@@ -502,7 +507,7 @@ def main():
         logger.warning("Scraper execution interrupted by user (KeyboardInterrupt). Shutting down cleanly...")
     finally:
         # Attempt final flush of any pending records
-        csv_writer.flush_pending()
+        excel_writer.flush_pending()
         
         # Stop background keepalive refresher
         auth_manager.stop_keepalive_refresher()
@@ -514,8 +519,8 @@ def main():
         logger.info("  Processed in this session:   %d", processed_in_session)
         logger.info("  Skipped (already completed): %d", skipped_count)
         logger.info("  Failed:                      %d", failed_count)
-        logger.info("  Total completed in CSV:      %d", len(progress_tracker.completed_ids))
-        logger.info("  CSV Output:                  %s", OUTPUT_CSV_PATH)
+        logger.info("  Total completed sellers:     %d", len(progress_tracker.completed_ids))
+        logger.info("  Output Directory:            %s", OUTPUT_DIR)
         logger.info("==========================================")
 
 

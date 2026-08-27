@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from api.api_client import APIClient
-from excel.excel_writer import CSVWriter
+from excel.excel_writer import CSVWriter, ExcelWriter
 from main import ProgressTracker, read_customer_ids
 from scrapers.api1_scraper import API1Scraper
 from scrapers.api2_scraper import API2Scraper
@@ -34,6 +34,7 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.api2 = API2Scraper(self.mock_client)
         self.api3 = API3Scraper(self.mock_client)
         self.csv_writer = CSVWriter(csv_path=self.csv_file, pending_path=self.pending_file)
+        self.excel_writer = self.csv_writer
         self.tracker = ProgressTracker(progress_path=self.progress_file)
 
     def tearDown(self):

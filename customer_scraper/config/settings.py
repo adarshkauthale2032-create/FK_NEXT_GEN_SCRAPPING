@@ -14,14 +14,17 @@ CONFIG_DIR = BASE_DIR / "config"
 BROWSER_PROFILE_DIR = BASE_DIR / "browser_profile"
 
 # File Paths
-INPUT_FILE_PATH = INPUT_DIR / "customer_id_input.txt"
+INPUT_EXCEL_PATH = INPUT_DIR / "customer_id_input.xlsx"
+INPUT_TXT_PATH = INPUT_DIR / "customer_id_input.txt"
+INPUT_FILE_PATH = INPUT_EXCEL_PATH if INPUT_EXCEL_PATH.exists() else INPUT_TXT_PATH
+INPUT_SHEET_NAME = "Input Sheet"
+INPUT_COLUMN_NAME = "seller_id"
 OUTPUT_CSV_PATH = OUTPUT_DIR / "scraped_data.csv"
-OUTPUT_EXCEL_PATH = OUTPUT_CSV_PATH  # Backward compatibility alias
+OUTPUT_EXCEL_PATH = OUTPUT_DIR / "scraped_data.xlsx"
 PROGRESS_FILE_PATH = OUTPUT_DIR / "progress.json"
 PENDING_FILE_PATH = OUTPUT_DIR / "pending_results.json"
 LOG_FILE_PATH = LOGS_DIR / "scraper.log"
 SESSION_CONFIG_PATH = CONFIG_DIR / "session.json"
-BROWSER_PROFILE_DIR = BASE_DIR / "browser_profile"
 
 # Ensure runtime directories exist
 INPUT_DIR.mkdir(parents=True, exist_ok=True)

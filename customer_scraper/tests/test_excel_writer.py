@@ -19,9 +19,11 @@ class TestCSVWriter(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
         self.csv_path = Path(self.test_dir) / "test_scraped_data.csv"
+        self.excel_path = Path(self.test_dir) / "test_scraped_data.xlsx"
         self.pending_path = Path(self.test_dir) / "test_pending.json"
         self.writer = CSVWriter(
             csv_path=self.csv_path,
+            excel_path=self.excel_path,
             pending_path=self.pending_path
         )
 
