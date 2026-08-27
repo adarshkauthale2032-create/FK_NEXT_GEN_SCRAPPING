@@ -232,7 +232,7 @@ class PlaywrightSessionHandler:
             context.on("request", handle_request)
 
             # ------------------------------------------------------------
-            # Step 1: Detect Open Tabs for Tab 1 (Seller Info) & Tab 2 (Track Approvals)
+            # Step 1: Detect Open Tabs for Tab 1 (Seller Info) & Tab 2 (Dashboard Settings)
             # ------------------------------------------------------------
             tab_info = None
             tab_approvals = None
@@ -240,10 +240,10 @@ class PlaywrightSessionHandler:
             for page in context.pages:
                 try:
                     p_url = page.url.lower()
-                    if "trackapprovalrequest" in p_url or "approval-store" in p_url or "requeststate=" in p_url:
+                    if "dashboard/settings" in p_url or "sellerdashboard" in p_url or "trackapprovalrequest" in p_url or "approval-store" in p_url:
                         if tab_approvals is None:
                             tab_approvals = page
-                    elif "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url or "sellerdashboard" in p_url:
+                    elif "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
                         if tab_info is None:
                             tab_info = page
                 except Exception:
@@ -270,16 +270,16 @@ class PlaywrightSessionHandler:
             await asyncio.sleep(1.5)
 
             # ------------------------------------------------------------
-            # Step 3: Refresh / Open Tab 2 (Track Approvals)
+            # Step 3: Refresh / Open Tab 2 (Dashboard Settings)
             # ------------------------------------------------------------
             if tab_approvals is None or tab_approvals == tab_info:
-                logger.info("[SESSION] Tab 2 (Track Approvals) not open. Opening new tab: %s", target_approvals_url)
+                logger.info("[SESSION] Tab 2 (Dashboard Settings) not open. Opening new tab: %s", target_approvals_url)
                 tab_approvals = await context.new_page()
                 await tab_approvals.goto(target_approvals_url, wait_until="domcontentloaded")
             else:
-                logger.info("[SESSION] Found Tab 2 (Track Approvals): %s. Refreshing...", tab_approvals.url)
+                logger.info("[SESSION] Found Tab 2 (Dashboard Settings): %s. Refreshing...", tab_approvals.url)
                 try:
-                    if active_seller_id not in tab_approvals.url or "trackApprovalRequestsV2" not in tab_approvals.url:
+                    if active_seller_id not in tab_approvals.url or "dashboard/settings" not in tab_approvals.url:
                         await tab_approvals.goto(target_approvals_url, wait_until="domcontentloaded")
                     else:
                         await tab_approvals.reload(wait_until="domcontentloaded")
@@ -404,7 +404,7 @@ class PlaywrightSessionHandler:
         print("=" * 70)
         print("[KEEPALIVE] Flipkart Dual-Tab Browser Keep-Alive Monitor Started")
         print(f"[KEEPALIVE] Tab 1 (Seller Info):        {target_info_url}")
-        print(f"[KEEPALIVE] Tab 2 (Track Approvals):    {target_approvals_url}")
+        print(f"[KEEPALIVE] Tab 2 (Dashboard Settings): {target_approvals_url}")
         print(f"[KEEPALIVE] Refresh Interval:           {self.refresh_interval} seconds (10 minutes)")
         print("[KEEPALIVE] Note: Only reloads pages; does not overwrite session.json")
         print("=" * 70)
@@ -431,7 +431,7 @@ class PlaywrightSessionHandler:
                     for page in context.pages:
                         try:
                             p_url = page.url.lower()
-                            if "trackapprovalrequest" in p_url or "approval-store" in p_url:
+                            if "dashboard/settings" in p_url or "sellerdashboard" in p_url or "trackapprovalrequest" in p_url:
                                 if tab_approvals is None:
                                     tab_approvals = page
                             elif "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
@@ -453,7 +453,7 @@ class PlaywrightSessionHandler:
 
                     # Refresh or open Tab 2
                     if tab_approvals is None or tab_approvals.is_closed() or tab_approvals == tab_info:
-                        logger.info("[KEEPALIVE] Opening Tab 2 (Track Approvals) at %s...", target_approvals_url)
+                        logger.info("[KEEPALIVE] Opening Tab 2 (Dashboard Settings) at %s...", target_approvals_url)
                         tab_approvals = await context.new_page()
                         await tab_approvals.goto(target_approvals_url, wait_until="domcontentloaded")
                     else:

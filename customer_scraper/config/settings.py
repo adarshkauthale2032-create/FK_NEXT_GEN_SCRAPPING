@@ -42,7 +42,8 @@ REFRESH_INTERVAL = 600
 
 # Dynamic Portal URLs
 SELLER_INFO_URL = "https://suv-flipkart.seller-support.fkcloud.it/#app/seller/{seller_id}/info"
-SELLER_APPROVALS_URL = "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={seller_id}#dashboard/listings/trackApprovalRequestsV2?requestState=ALL"
+SELLER_SETTINGS_URL = "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={seller_id}#dashboard/settings"
+SELLER_APPROVALS_URL = SELLER_SETTINGS_URL
 
 # API Endpoints
 API1_ENDPOINT = "/getSellerDetails?sellerId={customer_id}"

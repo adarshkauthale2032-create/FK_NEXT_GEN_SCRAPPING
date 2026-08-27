@@ -92,6 +92,11 @@ class API2Scraper:
             "Content-Type": "application/json",
             "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
             "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}",
+            "x-internal-env-type": "WEB",
+            "x-requested-with": "XMLHttpRequest",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
         }
 
         # Determine optimal page size (requesting full approved count or at least 10)
