@@ -1,0 +1,4 @@
+taskkill /F /IM chrome.exe
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="$env:TEMP\ChromeDebug"
+Invoke-WebRequest "http://127.0.0.1:9222/json/version"
+python main.py
