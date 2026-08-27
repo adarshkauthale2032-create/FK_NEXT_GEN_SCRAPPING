@@ -101,6 +101,16 @@ class APIClient:
                     # Check for session expiration
                     if self.auth_manager.is_session_expired(response):
                         logger.warning("Session expired or invalid detected on endpoint %s (Status: %s)", full_url, response.status_code)
+                        print("\n" + "=" * 75)
+                        print(f"⚠️ [API AUTH ERROR] {method.upper()} {full_url}")
+                        print(f"  Status Code:      {response.status_code}")
+                        if json_data is not None:
+                            print(f"  Request Payload:  {json.dumps(json_data)}")
+                        if params:
+                            print(f"  Request Params:   {json.dumps(params)}")
+                        print(f"  CSRF Token Used:  {req_headers.get('FK-CSRF-TOKEN') or req_headers.get('fk-csrf-token') or 'NONE'}")
+                        print(f"  Response Body:    {response.text[:1500] if response.text else '<EMPTY>'}")
+                        print("=" * 75 + "\n")
                         break  # Break inner loop to trigger auth refresh
 
                     # Check HTTP status
@@ -109,6 +119,7 @@ class APIClient:
                             return response.json()
                         except ValueError as json_err:
                             logger.error("Failed to parse JSON response from %s: %s", full_url, str(json_err))
+                            print(f"❌ [JSON PARSE ERROR] {full_url} returned invalid JSON: {response.text[:500]}")
                             raise APIResponseError(
                                 f"Invalid JSON response from {full_url}",
                                 status_code=response.status_code,
@@ -118,6 +129,12 @@ class APIClient:
                     # Handle 404 or other 4xx client errors that are not auth related
                     if 400 <= response.status_code < 500:
                         logger.error("Client error %d returned from %s: %s", response.status_code, full_url, response.text[:200])
+                        print("\n" + "=" * 75)
+                        print(f"❌ [CLIENT ERROR {response.status_code}] {method.upper()} {full_url}")
+                        if json_data is not None:
+                            print(f"  Request Payload:  {json.dumps(json_data)}")
+                        print(f"  Response Body:    {response.text[:1500] if response.text else '<EMPTY>'}")
+                        print("=" * 75 + "\n")
                         raise APIResponseError(
                             f"HTTP Client Error {response.status_code} for {full_url}",
                             status_code=response.status_code,

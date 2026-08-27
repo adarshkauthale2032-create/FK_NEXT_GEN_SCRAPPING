@@ -110,9 +110,14 @@ class API2Scraper:
                 "status": [None],
             }
 
+            print(f"\n[API #2] Calling requestsV2 for Seller: {customer_id} (Page: {page}, PageSize: {page_size})")
+            print(f"  URL:     {endpoint}")
+            print(f"  Payload: {json.dumps(payload)}")
+
             try:
                 response_data = self.api_client.post(endpoint, json_data=payload, headers=headers)
             except Exception as e:
+                print(f"❌ [API #2 ERROR] requestsV2 call failed for seller {customer_id}: {str(e)}")
                 logger.warning(
                     "API #2 (requestsV2) error for customer %s on page %d (%s). Proceeding with records collected so far.",
                     customer_id,
@@ -129,6 +134,8 @@ class API2Scraper:
                     if isinstance(response_data.get(k), list):
                         records_page = response_data[k]
                         break
+
+            print(f"✅ [API #2] Received {len(records_page)} records for seller {customer_id} (Page: {page})")
 
             if not records_page:
                 break
