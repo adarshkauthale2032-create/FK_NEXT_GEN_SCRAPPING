@@ -10,6 +10,7 @@ import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from api.api_client import APIClient
+from auth.auth_manager import AuthExpiredError
 from config.settings import API2_COUNT_ENDPOINT, API2_REQUESTS_ENDPOINT
 
 logger = logging.getLogger("customer_scraper")
@@ -47,6 +48,8 @@ class API2Scraper:
 
         try:
             response_data = self.api_client.get(endpoint, headers=headers)
+        except AuthExpiredError:
+            raise
         except Exception as e:
             logger.warning(
                 "API #2 (requestsV2-count) error for customer %s (%s). Proceeding with 0 counts.",
@@ -119,6 +122,8 @@ class API2Scraper:
 
             try:
                 response_data = self.api_client.post(endpoint, json_data=payload, headers=headers)
+            except AuthExpiredError:
+                raise
             except Exception as e:
                 print(f"❌ [API #2 ERROR] requestsV2 call failed for seller {customer_id}: {str(e)}")
                 logger.warning(

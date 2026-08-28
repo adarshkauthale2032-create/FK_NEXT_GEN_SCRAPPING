@@ -7,6 +7,7 @@ Fetches login/primary mobile numbers and login/primary email addresses.
 import logging
 from typing import Any, Dict, Optional
 from api.api_client import APIClient
+from auth.auth_manager import AuthExpiredError
 from config.settings import API3_ENDPOINT, GENERIC_EMAIL_DOMAINS
 
 logger = logging.getLogger("customer_scraper")
@@ -73,6 +74,8 @@ class API3Scraper:
 
         try:
             response_data = self.api_client.get(endpoint)
+        except AuthExpiredError:
+            raise
         except Exception as e:
             logger.warning("API #3 encountered an error for customer %s (%s). Proceeding with empty contacts.", customer_id, str(e))
             response_data = {}

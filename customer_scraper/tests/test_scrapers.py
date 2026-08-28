@@ -106,6 +106,12 @@ class TestAPI1Scraper(unittest.TestCase):
         self.assertEqual(res["signed_up_date"], "")
         self.assertEqual(res["live_date"], "")
 
+    def test_api1_raises_auth_expired_error(self):
+        from auth.auth_manager import AuthExpiredError
+        self.mock_client.get.side_effect = AuthExpiredError("Session expired")
+        with self.assertRaises(AuthExpiredError):
+            self.scraper.get_seller_details("EXPIRED_ID")
+
 
 class TestAPI2Scraper(unittest.TestCase):
     def setUp(self):

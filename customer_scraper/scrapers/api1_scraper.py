@@ -8,6 +8,7 @@ Seller Tier, Signed Up Date, and Live Date.
 import logging
 from typing import Any, Dict, Optional
 from api.api_client import APIClient
+from auth.auth_manager import AuthExpiredError
 from config.settings import API1_ENDPOINT
 
 logger = logging.getLogger("customer_scraper")
@@ -131,6 +132,8 @@ class API1Scraper:
 
         try:
             response_data = self.api_client.get(endpoint)
+        except AuthExpiredError:
+            raise
         except Exception as e:
             logger.warning("API #1 encountered an error for customer %s (%s). Proceeding with fallback.", customer_id, str(e))
             response_data = {}
