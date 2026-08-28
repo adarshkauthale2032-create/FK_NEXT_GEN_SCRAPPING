@@ -379,40 +379,58 @@ def main():
     api2 = API2Scraper(api_client)
     api3 = API3Scraper(api_client)
     
-    excel_writer = ExcelWriter(output_dir=OUTPUT_DIR, chunk_size=chunk_size)
-    csv_writer = excel_writer
+    csv_writer = CSVWriter(output_dir=OUTPUT_DIR, chunk_size=chunk_size)
+    excel_writer = csv_writer
     progress_tracker = ProgressTracker()
 
-    # 3. Synchronize progress with existing CSV / Excel datasets
-    completed_ids = excel_writer.get_completed_customer_ids()
+    # 3. Synchronize progress with existing CSV datasets
+    completed_ids = csv_writer.get_completed_customer_ids()
     progress_tracker.sync_with_csv(completed_ids)
 
     # 4. Flush any pending unpersisted data if present
-    excel_writer.flush_pending()
+    csv_writer.flush_pending()
 
     # Calculate current sequential Sr No counter
-    current_sr_no = excel_writer.get_current_customer_count() + 1
+    current_sr_no = csv_writer.get_current_customer_count() + 1
 
     total_ids = len(customer_ids)
     processed_in_session = 0
     skipped_count = 0
     failed_count = 0
 
+    # Pick up latest seller ID from progress.json and determine start index
+    last_completed_id = progress_tracker.last_completed_id
+    start_idx = 0
+    if last_completed_id and last_completed_id in customer_ids:
+        start_idx = customer_ids.index(last_completed_id) + 1
+        logger.info(
+            "📍 [RESUME] Picked up latest seller ID '%s' from progress.json (Index %d/%d). Resuming next seller from input file at position %d...",
+            last_completed_id, start_idx, total_ids, start_idx + 1
+        )
+    elif progress_tracker.completed_ids:
+        logger.info(
+            "📍 [RESUME] Progress loaded with %d completed sellers. Scanning input file for remaining IDs...",
+            len(progress_tracker.completed_ids)
+        )
+
     logger.info("Total inputs in file: %d", total_ids)
     logger.info("Already completed sellers (will be skipped): %d", len(progress_tracker.completed_ids))
-    logger.info("Batch file size: %d sellers / file", chunk_size)
+    logger.info("Batch file size: %d sellers / CSV file", chunk_size)
     if max_limit:
         logger.info("Target for this session: Scraping next %d new seller records.", max_limit)
 
     try:
-        for index, customer_id in enumerate(customer_ids, start=1):
+        for index in range(start_idx, total_ids):
+            customer_id = customer_ids[index]
+            display_pos = index + 1
+
             if max_limit and processed_in_session >= max_limit:
                 logger.info("🎉 [SESSION COMPLETE] Successfully scraped target of %d sellers in this run. Stopping script cleanly.", max_limit)
                 break
 
             # Check if customer was already completed
             if progress_tracker.is_completed(customer_id):
-                logger.info("[Progress %d/%d] ID: %s | Status: SKIPPED (Already completed)", index, total_ids, customer_id)
+                logger.info("[Progress %d/%d] ID: %s | Status: SKIPPED (Already completed)", display_pos, total_ids, customer_id)
                 skipped_count += 1
                 continue
 
@@ -420,8 +438,7 @@ def main():
                 # Calculate current batch metrics and target paths
                 batch_num = ((current_sr_no - 1) // chunk_size) + 1
                 batch_pos = ((current_sr_no - 1) % chunk_size) + 1
-                target_excel = excel_writer.get_excel_path_for_sr(current_sr_no)
-                target_csv = excel_writer.get_csv_path_for_sr(current_sr_no)
+                target_csv = csv_writer.get_csv_path_for_sr(current_sr_no)
 
                 # Step 1: Execute API #1 (Customer & Seller Details)
                 api1_data = api1.get_seller_details(customer_id)
@@ -445,19 +462,19 @@ def main():
                     **api3_data,
                 }
 
-                # Step 5: Save to Excel and CSV
-                save_success = excel_writer.append_customer(combined_record, sr_no=current_sr_no)
+                # Step 5: Save directly to CSV
+                save_success = csv_writer.append_customer(combined_record, sr_no=current_sr_no)
                 if save_success:
                     progress_tracker.mark_completed(customer_id)
                     is_d2c = combined_record.get("isD2C") or combined_record.get("is_d2c", "No")
                     logger.info(
-                        "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Status: %s | Support Mgr: %s | Approved Brands: %s | Actual Brands: %s | Tier: %s | isD2C: %s -> SAVED (%s & %s)",
-                        index, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, account_status, support_mgr, approved_brand_cnt, actual_brand_cnt, tier, is_d2c, target_excel.name, target_csv.name
+                        "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Status: %s | Support Mgr: %s | Approved Brands: %s | Actual Brands: %s | Tier: %s | isD2C: %s -> SAVED (%s)",
+                        display_pos, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, account_status, support_mgr, approved_brand_cnt, actual_brand_cnt, tier, is_d2c, target_csv.name
                     )
                     if current_sr_no % chunk_size == 0:
                         logger.info(
-                            "🎉 [BATCH COMPLETED] Batch #%d (%d sellers) fully saved to %s and %s!",
-                            batch_num, chunk_size, target_excel.name, target_csv.name
+                            "🎉 [BATCH COMPLETED] Batch #%d (%d sellers) fully saved to %s!",
+                            batch_num, chunk_size, target_csv.name
                         )
                     current_sr_no += 1
                     processed_in_session += 1

@@ -14,9 +14,23 @@ CONFIG_DIR = BASE_DIR / "config"
 BROWSER_PROFILE_DIR = BASE_DIR / "browser_profile"
 
 # File Paths
-INPUT_EXCEL_PATH = INPUT_DIR / "customer_id_input.xlsx"
-INPUT_TXT_PATH = INPUT_DIR / "customer_id_input.txt"
-INPUT_FILE_PATH = INPUT_EXCEL_PATH if INPUT_EXCEL_PATH.exists() else INPUT_TXT_PATH
+INPUT_EXCEL_CANDIDATES = [
+    INPUT_DIR / "input.xlsx",
+    INPUT_DIR / "customer_id_input.xlsx",
+    INPUT_DIR / "input.txt",
+    INPUT_DIR / "customer_id_input.txt",
+]
+
+def resolve_input_file() -> Path:
+    """Finds the existing input file path among configured candidates."""
+    for p in INPUT_EXCEL_CANDIDATES:
+        if p.exists():
+            return p
+    return INPUT_DIR / "input.xlsx"
+
+INPUT_FILE_PATH = resolve_input_file()
+INPUT_EXCEL_PATH = INPUT_DIR / "input.xlsx"
+INPUT_TXT_PATH = INPUT_DIR / "input.txt"
 INPUT_SHEET_NAME = "Input Sheet"
 INPUT_COLUMN_NAME = "seller_id"
 OUTPUT_CSV_PATH = OUTPUT_DIR / "scraped_data.csv"
@@ -54,8 +68,8 @@ API3_ENDPOINT = "/getSellerContacts?sellerId={customer_id}"
 API_APPROVALS_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2?sellerId={customer_id}"
 
 # Scraping & Business Rules
-CHUNK_SIZE = 500  # Number of sellers per output Excel / CSV batch file (e.g. 1-500, 501-1000, 1001-1500, etc.)
-DEFAULT_SCRAPE_LIMIT = 500  # Default number of sellers to scrape in this run
+CHUNK_SIZE = 10000  # Number of sellers per output CSV batch file (e.g. 1-10000, 10001-20000, etc.)
+DEFAULT_SCRAPE_LIMIT = 10000  # Default number of sellers to scrape in this run
 
 # HTTP & Retry Settings
 CONNECT_TIMEOUT = 10  # seconds to establish TCP connection

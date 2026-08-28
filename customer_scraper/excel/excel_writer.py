@@ -418,8 +418,8 @@ class CSVWriter:
         if not pending:
             return True
 
-        # Group rows by target files based on sr_no
-        batches: Dict[Tuple[Path, Path], List[List[Any]]] = {}
+        # Group rows by target CSV batch files based on sr_no
+        batches: Dict[Path, List[List[Any]]] = {}
         for item in pending:
             item_sr = item.get("sr_no", 1)
             item_data = item.get("data", {})
@@ -429,20 +429,17 @@ class CSVWriter:
                 sr_int = 1
 
             target_csv = self.get_csv_path_for_sr(sr_int)
-            target_excel = self.get_excel_path_for_sr(sr_int)
-            file_key = (target_csv, target_excel)
 
-            if file_key not in batches:
-                batches[file_key] = []
+            if target_csv not in batches:
+                batches[target_csv] = []
 
             rows = self._format_customer_rows(item_data, item_sr)
-            batches[file_key].extend(rows)
+            batches[target_csv].extend(rows)
 
         all_saved = True
-        for (target_csv, target_excel), rows in batches.items():
+        for target_csv, rows in batches.items():
             csv_ok = self._append_rows_to_csv_with_retry(target_csv, rows)
-            excel_ok = self._append_rows_to_excel_with_retry(target_excel, rows)
-            if not csv_ok or not excel_ok:
+            if not csv_ok:
                 all_saved = False
 
         if all_saved:

@@ -92,6 +92,17 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.assertTrue(new_tracker.is_completed("ID001"))
         self.assertTrue(new_tracker.is_completed("ID002"))
         self.assertFalse(new_tracker.is_completed("ID003"))
+        self.assertEqual(new_tracker.last_completed_id, "ID002")
+
+    def test_resume_from_last_completed_id(self):
+        input_ids = ["SELLER_A", "SELLER_B", "SELLER_C", "SELLER_D"]
+        self.tracker.mark_completed("SELLER_B")
+
+        # Verify resumption starting index
+        last_id = self.tracker.last_completed_id
+        start_idx = input_ids.index(last_id) + 1 if last_id in input_ids else 0
+        self.assertEqual(start_idx, 2)
+        self.assertEqual(input_ids[start_idx], "SELLER_C")
 
     def test_full_combined_flow(self):
         cust_id = "ID002"
@@ -238,9 +249,7 @@ class TestIntegrationScraperFlow(unittest.TestCase):
             self.tracker.mark_completed(c_id)
 
         for start, end in [(1, 2), (3, 4), (5, 6)]:
-            xlsx = chunk_dir / f"scraped_data_{start}_to_{end}.xlsx"
             csv_f = chunk_dir / f"scraped_data_{start}_to_{end}.csv"
-            self.assertTrue(xlsx.exists(), f"{xlsx.name} should exist")
             self.assertTrue(csv_f.exists(), f"{csv_f.name} should exist")
 
 
