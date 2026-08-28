@@ -209,16 +209,25 @@ class APIClient:
                     if "sellerId" in query_params:
                         seller_id = query_params["sellerId"][0]
 
-                logger.info("Triggering auth refresh for seller %s (Auth attempt %d/%d)...", seller_id or "default", auth_attempts, MAX_AUTH_RETRIES)
+                # Identify which API failed so we only refresh that specific page
+                target_api = "all"
+                if any(x in full_url for x in ("approval-store", "requestsV2", "sellerDashboard")):
+                    target_api = "api2"
+                elif "getSellerDetails" in full_url:
+                    target_api = "api1"
+                elif "getSellerContacts" in full_url or "get-locations" in full_url:
+                    target_api = "api3"
+
+                logger.info("Triggering auth refresh for seller %s (Target: %s, Auth attempt %d/%d)...", seller_id or "default", target_api.upper(), auth_attempts, MAX_AUTH_RETRIES)
                 try:
-                    refreshed = self.auth_manager.refresh_session(seller_id=seller_id)
+                    refreshed = self.auth_manager.refresh_session(seller_id=seller_id, target_api=target_api)
                     if not refreshed:
-                        raise AuthExpiredError("Unable to refresh authorized session.")
+                        raise AuthExpiredError(f"Unable to refresh session for {target_api}.")
                 except Exception as auth_err:
                     logger.error("Auth refresh failed: %s", str(auth_err))
                     raise AuthExpiredError(f"Authentication failed: {str(auth_err)}")
             else:
-                logger.error("Exceeded maximum auth retry attempts (%d). Stopping script.", MAX_AUTH_RETRIES)
+                logger.error("Exceeded maximum auth retry attempts (%d).", MAX_AUTH_RETRIES)
                 raise AuthExpiredError(
                     f"Script failed because session failed to get after {MAX_AUTH_RETRIES} attempts (website may be logged out in Chrome). Please open Chrome, log into Flipkart Seller Portal, and rerun python main.py."
                 )

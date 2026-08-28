@@ -154,6 +154,7 @@ class PlaywrightSessionHandler:
     async def _async_refresh_and_extract_session(
         self,
         seller_id: Optional[str] = None,
+        target_api: str = "all",
     ) -> Optional[Dict[str, Any]]:
         """
         Connects over CDP, refreshes the dynamic seller page, intercepts
@@ -169,11 +170,16 @@ class PlaywrightSessionHandler:
         target_info_url = SELLER_INFO_URL.format(seller_id=active_seller_id)
         target_approvals_url = SELLER_APPROVALS_URL.format(seller_id=active_seller_id)
 
-        captured_headers: Dict[str, str] = get_default_headers()
-        captured_cookies: Dict[str, str] = {}
+        # If refreshing only API 2, preserve existing valid Tab 1 session data
+        existing_session = self.read_current_session_file() if target_api == "api2" else {"cookies": {}, "headers": {}}
+        existing_cookies = existing_session.get("cookies", {})
+        existing_headers = existing_session.get("headers", {})
+
+        captured_headers: Dict[str, str] = {**get_default_headers(), **existing_headers}
+        captured_cookies: Dict[str, str] = {**existing_cookies}
         csrf_token_found: Optional[str] = None
 
-        logger.info("[SESSION] Connecting to Chrome over CDP (%s)...", self.cdp_url)
+        logger.info("[SESSION] Connecting to Chrome over CDP (%s) for target: %s...", self.cdp_url, target_api.upper())
 
         async with async_playwright() as p:
             try:
@@ -231,54 +237,56 @@ class PlaywrightSessionHandler:
 
             context.on("request", handle_request)
 
-            # ------------------------------------------------------------
-            # Step 1: Detect Open Tab 1 (Seller Info)
-            # ------------------------------------------------------------
             tab_info = None
-
-            for page in context.pages:
-                try:
-                    p_url = page.url.lower()
-                    if "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
-                        if tab_info is None and "dashboard/settings" not in p_url and "sellerdashboard" not in p_url:
-                            tab_info = page
-                except Exception:
-                    pass
+            tab_approvals = None
 
             # ------------------------------------------------------------
-            # Step 2: Keep / Refresh Tab 1 (Seller Info)
+            # Step 1: Keep / Refresh Tab 1 (Seller Info) - for API 1 / API 3 / All
             # ------------------------------------------------------------
-            if tab_info is None:
-                logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening: %s", target_info_url)
-                try:
-                    tab_info = await context.new_page()
-                    await tab_info.goto(target_info_url, timeout=12000, wait_until="domcontentloaded")
-                except Exception as ex1:
-                    logger.debug("[SESSION] Tab 1 open notice: %s", str(ex1))
+            if target_api in ("api1", "api3", "all"):
+                for page in context.pages:
+                    try:
+                        p_url = page.url.lower()
+                        if "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
+                            if tab_info is None and "dashboard/settings" not in p_url and "sellerdashboard" not in p_url:
+                                tab_info = page
+                    except Exception:
+                        pass
+
+                if tab_info is None:
+                    logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening: %s", target_info_url)
+                    try:
+                        tab_info = await context.new_page()
+                        await tab_info.goto(target_info_url, timeout=12000, wait_until="domcontentloaded")
+                    except Exception as ex1:
+                        logger.debug("[SESSION] Tab 1 open notice: %s", str(ex1))
+                else:
+                    logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Triggering reload...", tab_info.url)
+                    try:
+                        await tab_info.evaluate("() => { try { window.location.reload(); } catch(e){} }")
+                    except Exception as ex1:
+                        logger.debug("[SESSION] Tab 1 reload notice: %s", str(ex1))
+
+                await asyncio.sleep(1.0)
             else:
-                logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Triggering reload...", tab_info.url)
+                logger.info("[SESSION] Tab 1 (Seller Info) already valid. Skipping Tab 1 reload for %s.", target_api.upper())
+
+            # ------------------------------------------------------------
+            # Step 2: ALWAYS open Tab 2 (Dashboard Settings) in a brand NEW tab - for API 2 / All
+            # ------------------------------------------------------------
+            if target_api in ("api2", "all"):
+                logger.info("[SESSION] Opening Tab 2 (Dashboard Settings) in a brand new tab: %s", target_approvals_url)
                 try:
-                    await tab_info.evaluate("() => { try { window.location.reload(); } catch(e){} }")
-                except Exception as ex1:
-                    logger.debug("[SESSION] Tab 1 reload notice: %s", str(ex1))
+                    tab_approvals = await context.new_page()
+                    await tab_approvals.goto(target_approvals_url, timeout=12000, wait_until="domcontentloaded")
+                except Exception as ex2:
+                    logger.debug("[SESSION] Tab 2 open notice: %s", str(ex2))
 
-            await asyncio.sleep(1.0)
-
-            # ------------------------------------------------------------
-            # Step 3: ALWAYS open Tab 2 (Dashboard Settings) in a brand NEW tab
-            # ------------------------------------------------------------
-            logger.info("[SESSION] Opening Tab 2 (Dashboard Settings) in a brand new tab: %s", target_approvals_url)
-            try:
-                tab_approvals = await context.new_page()
-                await tab_approvals.goto(target_approvals_url, timeout=12000, wait_until="domcontentloaded")
-            except Exception as ex2:
-                logger.debug("[SESSION] Tab 2 open notice: %s", str(ex2))
-
-            # Wait for background API requests to fire on the new tab
-            await asyncio.sleep(2.5)
+                # Wait for background API requests to fire on the new tab
+                await asyncio.sleep(2.5)
 
             # ------------------------------------------------------------
-            # Step 4: Extract All Cookies for fkcloud.it domain
+            # Step 3: Extract All Live Cookies for fkcloud.it domain
             # ------------------------------------------------------------
             browser_cookies = await context.cookies([
                 "https://suv-flipkart.seller-support.fkcloud.it",
@@ -324,7 +332,7 @@ class PlaywrightSessionHandler:
 
             print()
             print("=" * 70)
-            print("[SESSION] session.json UPDATED WITH FRESH TOKENS")
+            print(f"[SESSION] session.json UPDATED (Target: {target_api.upper()})")
             print(f"[SESSION] File:    {self.session_file.resolve()}")
             print(f"[SESSION] Seller:  {active_seller_id}")
             print(f"[SESSION] Cookies: {len(captured_cookies)} captured")
@@ -351,7 +359,7 @@ class PlaywrightSessionHandler:
                 logger.debug("Failed to read %s: %s", self.session_file, str(e))
         return {"cookies": {}, "headers": {}}
 
-    def refresh_and_extract_session(self, seller_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def refresh_and_extract_session(self, seller_id: Optional[str] = None, target_api: str = "all") -> Optional[Dict[str, Any]]:
         """
         Synchronous entry point to refresh Flipkart browser page and extract updated session.
         """
@@ -363,7 +371,7 @@ class PlaywrightSessionHandler:
                 logger.error("Chrome is not running on port %d and could not be started.", CDP_PORT)
                 return None
 
-        return asyncio.run(self._async_refresh_and_extract_session(seller_id=seller_id))
+        return asyncio.run(self._async_refresh_and_extract_session(seller_id=seller_id, target_api=target_api))
 
 
 if __name__ == "__main__":

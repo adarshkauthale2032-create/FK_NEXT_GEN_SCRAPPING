@@ -130,31 +130,32 @@ class AuthManager:
         except Exception as e:
             logger.warning("[AUTH] Could not clear session file: %s", str(e))
 
-    def refresh_session(self, seller_id: Optional[str] = None) -> bool:
+    def refresh_session(self, seller_id: Optional[str] = None, target_api: str = "all") -> bool:
         """
-        Refreshes session when expired by:
-        1. Clearing session.json file completely.
-        2. Connecting to Chrome via CDP.
-        3. Refreshing Tab 1 and opening Tab 2 in a brand new tab.
-        4. Extracting fresh cookies and headers and saving to session.json.
+        Refreshes session when expired:
+        - If target_api == 'api2': Keeps Tab 1 session intact, opens Tab 2 in a new tab to extract Tab 2 session.
+        - If target_api in ('api1', 'api3'): Refreshes Tab 1.
+        - If target_api == 'all': Wipes session and re-extracts both.
         """
-        logger.info("[AUTH] Session expired. Wiping session.json and initiating browser re-extraction (Seller ID: %s)...", seller_id or "default")
+        logger.info("[AUTH] Session refresh requested for %s (Target API: %s)...", seller_id or "default", target_api.upper())
 
-        # Wipe session.json completely first
-        self.clear_session()
+        # If it's a full refresh / initial start, clear session first; if it's only API 2, keep Tab 1 session intact!
+        if target_api == "all":
+            self.clear_session()
 
         try:
-            session_data = self.playwright_handler.refresh_and_extract_session(seller_id=seller_id)
+            session_data = self.playwright_handler.refresh_and_extract_session(seller_id=seller_id, target_api=target_api)
             if session_data and session_data.get("cookies"):
                 new_cookies = session_data.get("cookies", {})
                 new_headers = session_data.get("headers", {})
 
-                # Replace in-memory dictionaries completely
-                self.cookies = new_cookies
-                self.headers = new_headers
+                # Update in-memory dictionaries
+                self.cookies.update(new_cookies)
+                self.headers.update(new_headers)
 
-                # Reset requests session to wipe any stale/expired cookies
-                self.session = requests.Session()
+                # Reset or update requests session
+                if target_api == "all":
+                    self.session = requests.Session()
                 self.session.cookies.update(new_cookies)
                 self.session.headers.update(new_headers)
 
@@ -166,7 +167,7 @@ class AuthManager:
                     self.session.headers["FK-CSRF-TOKEN"] = csrf_val
                     self.session.headers["fk-csrf-token"] = csrf_val
 
-                logger.info("[AUTH] Session successfully refreshed with clean state (%d cookies, %d headers).", len(new_cookies), len(new_headers))
+                logger.info("[AUTH] Session successfully refreshed (%d cookies, %d headers).", len(self.cookies), len(self.headers))
                 return True
         except Exception as e:
             logger.error("[AUTH] CDP session refresh failed: %s", str(e))

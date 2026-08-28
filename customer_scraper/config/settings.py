@@ -77,7 +77,7 @@ READ_TIMEOUT = 25  # seconds to wait for server response
 REQUEST_TIMEOUT = (CONNECT_TIMEOUT, READ_TIMEOUT)  # (connect, read) tuple
 MAX_REQUEST_RETRIES = 3  # retry attempts for transient network/API errors
 BACKOFF_FACTOR = 2  # exponential backoff multiplier in seconds
-MAX_AUTH_RETRIES = 2  # retry attempts after session refresh
+MAX_AUTH_RETRIES = 3  # retry attempts after session refresh (max 3 times)
 
 # CSV / File Lock & Retry Settings
 CSV_RETRY_INTERVAL = 3  # seconds between retries when file is locked

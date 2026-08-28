@@ -77,6 +77,21 @@ class TestAuthManager(unittest.TestCase):
             self.assertEqual(auth.cookies.get("connect.sid"), "token_xyz")
             self.assertEqual(auth.headers.get("FK-CSRF-TOKEN"), "csrf_playwright")
 
+    def test_refresh_session_target_api(self):
+        auth = AuthManager(session_path=self.session_path)
+        mock_refresh_output = {
+            "cookies": {"connect.sid": "token_api2"},
+            "headers": {"FK-CSRF-TOKEN": "csrf_api2"},
+        }
+        with patch.object(
+            auth.playwright_handler, "refresh_and_extract_session", return_value=mock_refresh_output
+        ) as mock_refresh:
+            success = auth.refresh_session(seller_id="seller_123", target_api="api2")
+            self.assertTrue(success)
+            mock_refresh.assert_called_once_with(seller_id="seller_123", target_api="api2")
+            self.assertEqual(auth.cookies.get("connect.sid"), "token_api2")
+            self.assertEqual(auth.headers.get("FK-CSRF-TOKEN"), "csrf_api2")
+
     def test_is_session_expired_status_codes(self):
         auth = AuthManager(session_path=self.session_path)
 
