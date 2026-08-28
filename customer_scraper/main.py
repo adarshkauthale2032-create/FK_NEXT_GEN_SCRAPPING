@@ -117,16 +117,26 @@ class ProgressTracker:
         self.last_completed_id = clean_id
         self._save()
 
-    def sync_with_csv(self, csv_ids: Set[str]) -> None:
+    def sync_with_csv(self, csv_ids: Set[str], last_id: Optional[str] = None) -> None:
         """
-        Synchronizes state with completed IDs found in the CSV/Excel dataset.
+        Synchronizes state with completed IDs and last completed ID found in the CSV dataset.
         """
+        updated = False
         if csv_ids:
             before_count = len(self.completed_ids)
             self.completed_ids.update(csv_ids)
             if len(self.completed_ids) > before_count:
                 logger.info("Synchronized progress: found %d completed IDs in output datasets.", len(self.completed_ids))
-                self._save()
+                updated = True
+
+        if last_id and str(last_id).strip():
+            clean_last = str(last_id).strip()
+            if self.last_completed_id != clean_last:
+                self.last_completed_id = clean_last
+                updated = True
+
+        if updated:
+            self._save()
 
     # Backward compatibility alias
     sync_with_excel = sync_with_csv
@@ -382,7 +392,8 @@ def main():
 
     # 3. Synchronize progress with existing CSV datasets
     completed_ids = csv_writer.get_completed_customer_ids()
-    progress_tracker.sync_with_csv(completed_ids)
+    last_csv_id = csv_writer.get_last_completed_customer_id()
+    progress_tracker.sync_with_csv(completed_ids, last_id=last_csv_id)
 
     # 4. Flush any pending unpersisted data if present
     csv_writer.flush_pending()

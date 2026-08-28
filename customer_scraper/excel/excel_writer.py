@@ -519,6 +519,35 @@ class CSVWriter:
         """Returns total count of unique completed customer IDs."""
         return len(self.get_completed_customer_ids())
 
+    def get_last_completed_customer_id(self) -> str:
+        """Returns the customer ID from the very last row written across all output CSV files."""
+        csv_files = sorted(list(self.output_dir.glob("scraped_data_*.csv")), key=lambda p: p.stat().st_mtime)
+        if not csv_files and self.csv_path and self.csv_path.exists():
+            csv_files = [self.csv_path]
+
+        last_id = ""
+        for csv_f in reversed(csv_files):
+            try:
+                with open(csv_f, "r", newline="", encoding="utf-8-sig") as f:
+                    reader = csv.reader(f)
+                    header = next(reader, None)
+                    cust_col_idx = 1
+                    if header:
+                        for i, col in enumerate(header):
+                            if col.strip().lower() in ("customer id", "customer_id", "seller id", "seller_id"):
+                                cust_col_idx = i
+                                break
+                    for row in reader:
+                        if row and len(row) > cust_col_idx:
+                            c_id = str(row[cust_col_idx]).strip()
+                            if c_id and c_id.lower() not in ("customer id", "customer_id", "none", "null", ""):
+                                last_id = c_id
+                if last_id:
+                    return last_id
+            except Exception:
+                pass
+        return last_id
+
 
 # Compatibility Aliases
 ExcelWriter = CSVWriter
