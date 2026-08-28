@@ -171,20 +171,8 @@ class AuthManager:
                 raise AuthExpiredError("User aborted session authentication prompt.")
 
         raise AuthExpiredError(
-            f"Authentication failed. Please ensure Chrome is open with debugging port (http://127.0.0.1:9222) and you are logged into Flipkart, then update {self.session_path}."
+            f"Script failed because session failed to get from Chrome (website may be logged out). Please open Chrome, log into Flipkart Seller Portal, and update {self.session_path.name} or rerun python main.py."
         )
-
-    def start_keepalive_refresher(self, seller_id: Optional[str] = None) -> None:
-        """
-        Starts the background 10-minute tab refresh loop.
-        """
-        self.playwright_handler.start_keepalive_thread(seller_id=seller_id)
-
-    def stop_keepalive_refresher(self) -> None:
-        """
-        Stops the background 10-minute tab refresh loop.
-        """
-        self.playwright_handler.stop_keepalive_thread()
 
     def _save_to_file(self) -> None:
         """Saves current cookies and headers to session.json."""

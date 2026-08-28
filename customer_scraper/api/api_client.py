@@ -217,8 +217,10 @@ class APIClient:
                     logger.error("Auth refresh failed: %s", str(auth_err))
                     raise AuthExpiredError(f"Authentication failed: {str(auth_err)}")
             else:
-                logger.error("Exceeded maximum auth retry attempts (%d). Aborting request.", MAX_AUTH_RETRIES)
-                raise AuthExpiredError(f"Session expired and could not be renewed for {full_url}")
+                logger.error("Exceeded maximum auth retry attempts (%d). Stopping script.", MAX_AUTH_RETRIES)
+                raise AuthExpiredError(
+                    f"Script failed because session failed to get after {MAX_AUTH_RETRIES} attempts (website may be logged out in Chrome). Please open Chrome, log into Flipkart Seller Portal, and rerun python main.py."
+                )
 
         raise APIError(f"Request to {full_url} failed after maximum retry attempts.")
 

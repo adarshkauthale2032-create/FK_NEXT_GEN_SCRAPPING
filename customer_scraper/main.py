@@ -371,9 +371,6 @@ def main():
             logger.error("Authentication error: %s", str(e))
             return
 
-    # Start background 10-minute tab keepalive refresher
-    auth_manager.start_keepalive_refresher(seller_id=first_seller_id)
-
     api_client = APIClient(auth_manager)
     api1 = API1Scraper(api_client)
     api2 = API2Scraper(api_client)
@@ -485,8 +482,14 @@ def main():
                     logger.error("Failed to persist data for customer ID: %s", customer_id)
 
             except AuthExpiredError as auth_err:
-                logger.critical("[ALERT] Authentication expired while processing %s: %s", customer_id, str(auth_err))
-                print(f"\n[!] Scraping paused due to authentication expiry on {customer_id}. Please refresh session.")
+                logger.critical("[CRITICAL] Authentication error on customer ID %s: %s", customer_id, str(auth_err))
+                print("\n" + "=" * 75)
+                print("❌ [SCRIPT STOPPED] Failed to retrieve valid Flipkart session.")
+                print(f"   Reason: {str(auth_err)}")
+                print("   Action: Please open Chrome, make sure you are logged into the Flipkart")
+                print("           Seller Portal, and rerun the script:")
+                print("           python main.py")
+                print("=" * 75 + "\n")
                 break
 
             except APIError as api_err:
@@ -502,9 +505,6 @@ def main():
     finally:
         # Attempt final flush of any pending records
         excel_writer.flush_pending()
-        
-        # Stop background keepalive refresher
-        auth_manager.stop_keepalive_refresher()
         
         logger.info("==========================================")
         logger.info("Scraping Summary:")
