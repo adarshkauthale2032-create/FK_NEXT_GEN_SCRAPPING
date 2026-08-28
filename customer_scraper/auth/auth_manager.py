@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import requests
 
-from config.settings import BASE_URL, REFRESH_INTERVAL, SESSION_CONFIG_PATH
+from config.settings import BASE_URL, DEFAULT_SELLER_ID, REFRESH_INTERVAL, SESSION_CONFIG_PATH
 from auth.playwright_session import PlaywrightSessionHandler
 
 logger = logging.getLogger("customer_scraper")
@@ -132,19 +132,17 @@ class AuthManager:
 
     def refresh_session(self, seller_id: Optional[str] = None, target_api: str = "all") -> bool:
         """
-        Refreshes session when expired:
-        - If target_api == 'api2': Keeps Tab 1 session intact, opens Tab 2 in a new tab to extract Tab 2 session.
-        - If target_api in ('api1', 'api3'): Refreshes Tab 1.
-        - If target_api == 'all': Wipes session and re-extracts both.
+        Refreshes session when expired using the fixed standard seller ID (218598a2b41c4bcd).
         """
-        logger.info("[AUTH] Session refresh requested for %s (Target API: %s)...", seller_id or "default", target_api.upper())
+        target_seller = str(seller_id).strip() if seller_id else DEFAULT_SELLER_ID
+        logger.info("[AUTH] Session refresh requested for seller ID %s (Target API: %s)...", target_seller, target_api.upper())
 
-        # If it's a full refresh / initial start, clear session first; if it's only API 2, keep Tab 1 session intact!
+        # If it's a full refresh / initial start, clear session first
         if target_api == "all":
             self.clear_session()
 
         try:
-            session_data = self.playwright_handler.refresh_and_extract_session(seller_id=seller_id, target_api=target_api)
+            session_data = self.playwright_handler.refresh_and_extract_session(seller_id=target_seller, target_api=target_api)
             if session_data and session_data.get("cookies"):
                 new_cookies = session_data.get("cookies", {})
                 new_headers = session_data.get("headers", {})

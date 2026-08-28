@@ -14,6 +14,7 @@ import requests
 from auth.auth_manager import AuthManager, AuthExpiredError
 from config.settings import (
     BASE_URL,
+    DEFAULT_SELLER_ID,
     REQUEST_TIMEOUT,
     MAX_REQUEST_RETRIES,
     BACKOFF_FACTOR,
@@ -218,9 +219,10 @@ class APIClient:
                 elif "getSellerContacts" in full_url or "get-locations" in full_url:
                     target_api = "api3"
 
-                logger.info("Triggering auth refresh for seller %s (Target: %s, Auth attempt %d/%d)...", seller_id or "default", target_api.upper(), auth_attempts, MAX_AUTH_RETRIES)
+                refresh_target_seller = seller_id or DEFAULT_SELLER_ID
+                logger.info("Triggering auth refresh for seller %s (Target: %s, Auth attempt %d/%d)...", refresh_target_seller, target_api.upper(), auth_attempts, MAX_AUTH_RETRIES)
                 try:
-                    refreshed = self.auth_manager.refresh_session(seller_id=seller_id, target_api=target_api)
+                    refreshed = self.auth_manager.refresh_session(seller_id=refresh_target_seller, target_api=target_api)
                     if not refreshed:
                         raise AuthExpiredError(f"Unable to refresh session for {target_api}.")
                 except Exception as auth_err:

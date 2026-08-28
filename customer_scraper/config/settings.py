@@ -57,6 +57,8 @@ CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
 REFRESH_INTERVAL = 600
 
 # Dynamic Portal URLs
+DEFAULT_SELLER_ID = "218598a2b41c4bcd"
+DEFAULT_FALLBACK_SELLER_ID = DEFAULT_SELLER_ID
 SELLER_INFO_URL = "https://suv-flipkart.seller-support.fkcloud.it/#app/seller/{seller_id}/info"
 SELLER_SETTINGS_URL = "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={seller_id}#dashboard/settings"
 SELLER_APPROVALS_URL = SELLER_SETTINGS_URL

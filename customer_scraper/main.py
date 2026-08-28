@@ -26,6 +26,7 @@ if str(BASE_DIR) not in sys.path:
 from config.settings import (
     CHUNK_SIZE,
     DEFAULT_SCRAPE_LIMIT,
+    DEFAULT_SELLER_ID,
     INPUT_FILE_PATH,
     INPUT_SHEET_NAMES,
     INPUT_SHEET_NAME,
@@ -338,7 +339,7 @@ def main():
     parser = argparse.ArgumentParser(description="Flipkart Customer Scraping Automation (Fast D2C Mode)")
     parser.add_argument("--refresh-session", action="store_true", help="Refresh Flipkart tab in Chrome and update session.json")
     parser.add_argument("--monitor-session", action="store_true", help="Run 10-minute browser tab keepalive refresh loop")
-    parser.add_argument("--seller-id", type=str, default=None, help="Specific seller ID for session refresh / keepalive")
+    parser.add_argument("--seller-id", type=str, default=DEFAULT_SELLER_ID, help=f"Specific seller ID for session refresh / keepalive (default: {DEFAULT_SELLER_ID})")
     parser.add_argument("--import-curl", type=str, help="Import session headers and cookies from a copied cURL command")
     parser.add_argument("--set-cookie", type=str, help="Set cookie string directly")
     parser.add_argument("--chunk-size", type=int, default=CHUNK_SIZE, help=f"Number of sellers per output batch file (default: {CHUNK_SIZE})")
@@ -517,7 +518,7 @@ def main():
                         customer_id, seller_attempt, max_seller_retries
                     )
                     try:
-                        auth_manager.refresh_session(seller_id=customer_id)
+                        auth_manager.refresh_session(seller_id=DEFAULT_SELLER_ID)
                     except Exception as refresh_err:
                         logger.error("Automatic session refresh failed: %s", str(refresh_err))
 
@@ -532,7 +533,7 @@ def main():
                             try:
                                 input("Press Enter to resume...")
                                 consecutive_auth_failures = 0
-                                auth_manager.refresh_session(seller_id=customer_id)
+                                auth_manager.refresh_session(seller_id=DEFAULT_SELLER_ID)
                             except (EOFError, KeyboardInterrupt):
                                 break
                         else:

@@ -25,6 +25,7 @@ from config.settings import (
     BASE_URL,
     CDP_PORT,
     CDP_URL,
+    DEFAULT_SELLER_ID,
     REFRESH_INTERVAL,
     SELLER_APPROVALS_URL,
     SELLER_INFO_URL,
@@ -33,7 +34,7 @@ from config.settings import (
 
 logger = logging.getLogger("customer_scraper")
 
-DEFAULT_FALLBACK_SELLER_ID = "8dcb3a6a73394ba4"
+DEFAULT_FALLBACK_SELLER_ID = DEFAULT_SELLER_ID or "218598a2b41c4bcd"
 
 
 def is_cdp_available(cdp_url: str = CDP_URL) -> bool:
