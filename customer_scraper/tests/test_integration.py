@@ -27,7 +27,7 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.pending_file = self.test_dir / "pending.json"
 
         # Populate sample input file
-        self.input_file.write_text("ID001\nID002\nID003\n\n# comment\nID004\n", encoding="utf-8")
+        self.input_file.write_text("ID000001\nID000002\nID000003\n\n# comment\nID000004\n", encoding="utf-8")
 
         self.mock_client = MagicMock(spec=APIClient)
         self.api1 = API1Scraper(self.mock_client)
@@ -42,22 +42,22 @@ class TestIntegrationScraperFlow(unittest.TestCase):
 
     def test_input_file_reader_txt(self):
         ids = read_customer_ids(self.input_file)
-        self.assertEqual(ids, ["ID001", "ID002", "ID003", "ID004"])
+        self.assertEqual(ids, ["ID000001", "ID000002", "ID000003", "ID000004"])
 
     def test_input_file_reader_excel(self):
         import openpyxl
         input_xlsx = self.test_dir / "customer_id_input.xlsx"
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.title = "Input Sheet"
-        ws.append(["seller_id"])
-        ws.append(["XLSX_ID_1"])
-        ws.append(["XLSX_ID_2"])
-        ws.append(["XLSX_ID_3"])
+        ws.title = "Merged Data 1"
+        ws.append(["Seller ID"])
+        ws.append(["XLSX_ID_12345"])
+        ws.append(["XLSX_ID_23456"])
+        ws.append(["XLSX_ID_34567"])
         wb.save(input_xlsx)
 
         ids = read_customer_ids(input_xlsx)
-        self.assertEqual(ids, ["XLSX_ID_1", "XLSX_ID_2", "XLSX_ID_3"])
+        self.assertEqual(ids, ["XLSX_ID_12345", "XLSX_ID_23456", "XLSX_ID_34567"])
 
     def test_support_manager_yes_runs_all_apis_without_skipping(self):
         customer_id = "ID_SUPP_YES"

@@ -223,6 +223,26 @@ def ensure_input_excel_exists(excel_path: Path, txt_path: Optional[Path] = None)
         logger.warning("Could not auto-create %s: %s", excel_path.name, str(e))
 
 
+def is_valid_seller_id(val: Any) -> bool:
+    """
+    Validates whether a candidate string is a plausible Flipkart seller / customer ID.
+    Rejects column headers, short strings (e.g. 'wsr'), keywords, and non-ID data.
+    """
+    if val is None:
+        return False
+    s = str(val).strip().lower()
+    if len(s) < 8 or len(s) > 64:
+        return False
+    # Reject known non-seller keywords
+    if s in (
+        "seller_id", "seller id", "sellerid", "customer_id", "customer id",
+        "customerid", "vertical", "wsr", "none", "null", "date", "request_id",
+        "request id", "total_listing", "total listing", "account_name"
+    ):
+        return False
+    return True
+
+
 def stream_customer_ids(
     file_path: Path,
     sheet_names: Optional[List[str]] = None,
@@ -236,7 +256,6 @@ def stream_customer_ids(
         Tuple of (sheet_name: str, row_index: int, seller_id: str)
     """
     target_sheets = sheet_names or INPUT_SHEET_NAMES
-    target_col_names = [c.strip().lower().replace(" ", "_").replace("-", "_") for c in (column_names or INPUT_COLUMN_NAMES)]
 
     # Auto-create template if file is missing
     if not file_path.exists() and file_path.suffix.lower() in (".xlsx", ".xlsm", ".xltx"):
@@ -281,21 +300,41 @@ def stream_customer_ids(
                 for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
                     # Check top 5 rows for column header
                     if not header_found and row_idx <= 5:
+                        # Pass 1: Prioritize exact 'Seller ID' / 'seller_id' / 'sellerid'
                         for col_idx, cell_val in enumerate(row):
                             if cell_val is not None:
                                 col_clean = str(cell_val).strip().lower().replace(" ", "_").replace("-", "_")
-                                if col_clean in target_col_names or col_clean in ("seller_id", "sellerid", "customer_id", "customerid", "id"):
+                                if col_clean in ("seller_id", "sellerid", "seller_account_id"):
                                     seller_col_idx = col_idx
                                     header_found = True
-                                    logger.info("Sheet '%s': Found Seller ID in column %d ('%s')", s_name, col_idx + 1, str(cell_val).strip())
+                                    logger.info("Sheet '%s': Found primary 'Seller ID' header in column %d ('%s')", s_name, col_idx + 1, str(cell_val).strip())
                                     break
+
+                        # Pass 2: Secondary check for 'customer_id' if seller_id not present
+                        if not header_found:
+                            for col_idx, cell_val in enumerate(row):
+                                if cell_val is not None:
+                                    col_clean = str(cell_val).strip().lower().replace(" ", "_").replace("-", "_")
+                                    if col_clean in ("customer_id", "customerid"):
+                                        seller_col_idx = col_idx
+                                        header_found = True
+                                        logger.info("Sheet '%s': Found secondary 'Customer ID' header in column %d ('%s')", s_name, col_idx + 1, str(cell_val).strip())
+                                        break
+
                         if header_found:
                             continue
 
-                    # If header wasn't found in top rows, default to col 0
+                    # If header wasn't found by row 6, auto-detect column containing valid 16-char IDs
                     if not header_found and row_idx > 5:
-                        seller_col_idx = 0
-                        header_found = True
+                        for col_idx, cell_val in enumerate(row):
+                            if is_valid_seller_id(cell_val):
+                                seller_col_idx = col_idx
+                                header_found = True
+                                logger.info("Sheet '%s': Auto-detected Seller ID in column %d", s_name, col_idx + 1)
+                                break
+                        if not header_found:
+                            seller_col_idx = 3  # Default to 4th column ('Seller ID' in Date, Vertical, Request ID, Seller ID, Total Listing)
+                            header_found = True
 
                     # Extract seller ID
                     if seller_col_idx is not None and len(row) > seller_col_idx:
@@ -306,8 +345,10 @@ def stream_customer_ids(
                             else:
                                 clean_id = str(val).strip()
 
-                            if clean_id and clean_id.lower() not in ("seller id", "seller_id", "customer id", "customer_id", "none", "null", ""):
+                            if is_valid_seller_id(clean_id):
                                 yield (s_name, row_idx, clean_id)
+                            elif clean_id and clean_id.lower() not in ("none", "null", ""):
+                                logger.debug("Sheet '%s' Row %d: Skipped non-seller value '%s'", s_name, row_idx, clean_id)
 
             wb.close()
             return
@@ -326,7 +367,7 @@ def stream_customer_ids(
         for line in f:
             row_idx += 1
             clean_line = line.strip()
-            if clean_line and not clean_line.startswith("#"):
+            if clean_line and not clean_line.startswith("#") and is_valid_seller_id(clean_line):
                 yield ("TextFile", row_idx, clean_line)
 
 
