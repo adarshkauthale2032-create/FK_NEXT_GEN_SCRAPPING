@@ -71,8 +71,8 @@ class APIClient:
         while auth_attempts <= MAX_AUTH_RETRIES:
             session = self.auth_manager.get_session()
             
-            # Prepare merged headers including all captured portal headers
-            req_headers = dict(self.auth_manager.headers)
+            # Prepare merged headers if specified
+            req_headers = {}
             if headers:
                 req_headers.update(headers)
 
@@ -85,11 +85,6 @@ class APIClient:
             if current_csrf:
                 req_headers["FK-CSRF-TOKEN"] = current_csrf
                 req_headers["fk-csrf-token"] = current_csrf
-
-            # Explicitly inject freshest Cookie header directly into every outgoing request
-            cookie_str = self.auth_manager.get_cookie_header_string()
-            if cookie_str:
-                req_headers["Cookie"] = cookie_str
 
             retry_count = 0
             while retry_count < MAX_REQUEST_RETRIES:
@@ -224,13 +219,12 @@ class APIClient:
                 elif "getSellerContacts" in full_url or "get-locations" in full_url:
                     target_api = "api3"
 
-                refresh_target_seller = DEFAULT_SELLER_ID
-                logger.info("Triggering auth refresh using seller %s (Target: %s, Auth attempt %d/%d)...", refresh_target_seller, target_api.upper(), auth_attempts, MAX_AUTH_RETRIES)
+                refresh_target_seller = seller_id or DEFAULT_SELLER_ID
+                logger.info("Triggering auth refresh for seller %s (Target: %s, Auth attempt %d/%d)...", refresh_target_seller, target_api.upper(), auth_attempts, MAX_AUTH_RETRIES)
                 try:
                     refreshed = self.auth_manager.refresh_session(seller_id=refresh_target_seller, target_api=target_api)
                     if not refreshed:
                         raise AuthExpiredError(f"Unable to refresh session for {target_api}.")
-                    logger.info("[AUTH] Session refreshed successfully. Resuming API call with updated session.")
                 except Exception as auth_err:
                     logger.error("Auth refresh failed: %s", str(auth_err))
                     raise AuthExpiredError(f"Authentication failed: {str(auth_err)}")
