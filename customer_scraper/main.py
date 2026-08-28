@@ -485,6 +485,11 @@ def main():
                                 "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Status: %s | Support Mgr: %s | Tier: %s | isD2C: YES -> SAVED TO CSV (D2C Saved: %d/%d | Sr No: %d | File: %s)",
                                 sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, account_status, support_mgr, tier, d2c_saved_in_session, max_d2c_limit, current_sr_no, target_csv.name
                             )
+                            if d2c_saved_in_session % 100 == 0:
+                                logger.info(
+                                    "💾 [100-ROW CHECKPOINT] %d D2C rows flushed to disk in %s (Current Sr No: %d).",
+                                    d2c_saved_in_session, target_csv.name, current_sr_no
+                                )
                             if current_sr_no % chunk_size == 0:
                                 logger.info(
                                     "🎉 [BATCH COMPLETED] Batch #%d (%d D2C sellers) fully saved to %s!",

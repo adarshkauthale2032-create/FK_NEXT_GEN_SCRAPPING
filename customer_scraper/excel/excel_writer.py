@@ -214,7 +214,12 @@ class CSVWriter:
                     writer = csv.writer(f)
                     for row in rows:
                         writer.writerow(row)
-                logger.debug("Successfully appended %d row(s) to %s", len(rows), csv_file.name)
+                    f.flush()
+                    try:
+                        os.fsync(f.fileno())
+                    except Exception:
+                        pass
+                logger.debug("Successfully appended %d row(s) to %s (flushed to disk)", len(rows), csv_file.name)
                 return True
             except (PermissionError, OSError):
                 retries += 1
