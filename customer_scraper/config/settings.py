@@ -69,6 +69,26 @@ MAX_AUTH_RETRIES = 2  # retry attempts after session refresh
 CSV_RETRY_INTERVAL = 3  # seconds between retries when file is locked
 MAX_CSV_LOCK_RETRIES = 60  # total retries before pausing/raising (approx 3 minutes)
 
+# Generic Email Domains (not considered unique/D2C)
+GENERIC_EMAIL_DOMAINS = {
+    "gmail.com",
+    "googlemail.com",
+    "yahoo.com",
+    "yahoo.co.in",
+    "yahoo.in",
+    "rediffmail.com",
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "icloud.com",
+    "zoho.com",
+    "protonmail.com",
+    "aol.com",
+    "ymail.com",
+    "mail.com",
+    "gmx.com",
+}
+
 # CSV / Excel Column Definitions (Preserving strict order)
 CSV_COLUMNS = [
     "Sr No",
@@ -85,5 +105,6 @@ CSV_COLUMNS = [
     "Registered Mobile Number",
     "Email ID",
     "Registered Email ID",
+    "isD2C",
 ]
 EXCEL_COLUMNS = CSV_COLUMNS  # Backward compatibility alias

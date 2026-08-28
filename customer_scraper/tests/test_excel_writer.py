@@ -104,6 +104,7 @@ class TestCSVWriter(unittest.TestCase):
         self.assertEqual(row_vals[11], "9876543211")
         self.assertEqual(row_vals[12], "contact@retail.com")
         self.assertEqual(row_vals[13], "reg@retail.com")
+        self.assertEqual(row_vals[14], "Yes")  # retail.com is custom domain -> isD2C = Yes
 
     def test_get_completed_customer_ids(self):
         cust1 = {"customer_id": "ID_AAA", "support_manager": "Yes"}

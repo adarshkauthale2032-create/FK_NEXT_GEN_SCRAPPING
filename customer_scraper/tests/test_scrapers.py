@@ -198,6 +198,27 @@ class TestAPI3Scraper(unittest.TestCase):
         self.assertEqual(res["registered_mobile_number"], "+919999354199")
         self.assertEqual(res["email_id"], "slowlorisstore@gmail.com")
         self.assertEqual(res["registered_email_id"], "profile_email@example.com")
+        self.assertEqual(res["isD2C"], "Yes")  # profile_email@example.com is custom domain
+
+    def test_is_d2c_no_for_gmail(self):
+        self.mock_client.get.return_value = {
+            "result": {
+                "loginEmail": "myseller@gmail.com",
+                "primaryEmail": "myseller@gmail.com",
+            }
+        }
+        res = self.scraper.get_seller_contacts("ID_GMAIL")
+        self.assertEqual(res["isD2C"], "No")
+
+    def test_is_d2c_yes_for_custom_brand_domain(self):
+        self.mock_client.get.return_value = {
+            "result": {
+                "loginEmail": "care@boat.com",
+                "primaryEmail": "support@boat.com",
+            }
+        }
+        res = self.scraper.get_seller_contacts("ID_BOAT")
+        self.assertEqual(res["isD2C"], "Yes")
 
     def test_get_seller_contacts_null_values(self):
         self.mock_client.get.return_value = {
@@ -208,11 +229,13 @@ class TestAPI3Scraper(unittest.TestCase):
                 "primaryEmail": None,
             }
         }
-        res = self.scraper.get_seller_contacts("ID002")
+        res = self.scraper.get_seller_contacts("ID003")
+        self.assertEqual(res["customer_id"], "ID003")
         self.assertEqual(res["mobile_number"], "")
         self.assertEqual(res["registered_mobile_number"], "")
         self.assertEqual(res["email_id"], "")
         self.assertEqual(res["registered_email_id"], "")
+        self.assertEqual(res["isD2C"], "No")
 
 
 if __name__ == "__main__":

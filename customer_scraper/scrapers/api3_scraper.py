@@ -7,9 +7,27 @@ Fetches login/primary mobile numbers and login/primary email addresses.
 import logging
 from typing import Any, Dict, Optional
 from api.api_client import APIClient
-from config.settings import API3_ENDPOINT
+from config.settings import API3_ENDPOINT, GENERIC_EMAIL_DOMAINS
 
 logger = logging.getLogger("customer_scraper")
+
+
+def determine_is_d2c(*emails: Optional[str]) -> str:
+    """
+    Checks if any provided email contains a unique/custom domain (not gmail.com or generic email services).
+    Returns 'Yes' if a custom/unique domain is found, else 'No'.
+    """
+    for email in emails:
+        if not email:
+            continue
+        email_str = str(email).strip().lower()
+        if "@" in email_str:
+            parts = email_str.split("@")
+            domain = parts[-1].strip()
+            # Must be a valid domain with a dot, not a generic provider, and not null/none
+            if domain and "." in domain and domain not in GENERIC_EMAIL_DOMAINS and domain not in ("null", "none"):
+                return "Yes"
+    return "No"
 
 
 class API3Scraper:
@@ -48,6 +66,7 @@ class API3Scraper:
                 registered_mobile_number: str
                 email_id: str
                 registered_email_id: str
+                isD2C: str ('Yes' / 'No')
         """
         endpoint = API3_ENDPOINT.format(customer_id=customer_id)
         logger.info("API #3 started for customer ID: %s", customer_id)
@@ -87,7 +106,10 @@ class API3Scraper:
             or self._safe_get(result, "primaryEmail")
         )
 
-        logger.info("API #3 successful for customer ID: %s", customer_id)
+        # 5. Determine isD2C based on email domains
+        is_d2c = determine_is_d2c(email_id, registered_email_id)
+
+        logger.info("API #3 successful for customer ID: %s | isD2C: %s", customer_id, is_d2c)
 
         return {
             "customer_id": str(customer_id).strip(),
@@ -95,4 +117,6 @@ class API3Scraper:
             "registered_mobile_number": registered_mobile_number,
             "email_id": email_id,
             "registered_email_id": registered_email_id,
+            "isD2C": is_d2c,
+            "is_d2c": is_d2c,
         }

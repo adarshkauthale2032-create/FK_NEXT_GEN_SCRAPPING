@@ -21,6 +21,7 @@ from config.settings import (
     CSV_COLUMNS,
     CSV_RETRY_INTERVAL,
     EXCEL_COLUMNS,
+    GENERIC_EMAIL_DOMAINS,
     MAX_CSV_LOCK_RETRIES,
     OUTPUT_CSV_PATH,
     OUTPUT_DIR,
@@ -149,6 +150,7 @@ class CSVWriter:
                 12: 24, # Registered Mobile Number
                 13: 25, # Email ID
                 14: 28, # Registered Email ID
+                15: 12, # isD2C
             }
             for col_idx, width in col_widths.items():
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
@@ -358,6 +360,19 @@ class CSVWriter:
         email_id = data.get("email_id", "")
         registered_email = data.get("registered_email_id", "")
 
+        # Determine isD2C ('Yes' or 'No') based on unique email domains
+        is_d2c = data.get("isD2C") or data.get("is_d2c")
+        if not is_d2c:
+            is_d2c = "No"
+            for em in (email_id, registered_email):
+                if em:
+                    em_str = str(em).strip().lower()
+                    if "@" in em_str:
+                        dom = em_str.split("@")[-1].strip()
+                        if dom and "." in dom and dom not in GENERIC_EMAIL_DOMAINS and dom not in ("null", "none"):
+                            is_d2c = "Yes"
+                            break
+
         return [[
             sr_no,
             customer_id,
@@ -373,6 +388,7 @@ class CSVWriter:
             registered_mobile,
             email_id,
             registered_email,
+            is_d2c,
         ]]
 
     def append_customer(self, customer_data: Dict[str, Any], sr_no: Any) -> bool:

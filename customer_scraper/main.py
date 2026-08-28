@@ -449,9 +449,10 @@ def main():
                 save_success = excel_writer.append_customer(combined_record, sr_no=current_sr_no)
                 if save_success:
                     progress_tracker.mark_completed(customer_id)
+                    is_d2c = combined_record.get("isD2C") or combined_record.get("is_d2c", "No")
                     logger.info(
-                        "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Status: %s | Support Mgr: %s | Approved Brands: %s | Actual Brands: %s | Tier: %s -> SAVED (%s & %s)",
-                        index, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, account_status, support_mgr, approved_brand_cnt, actual_brand_cnt, tier, target_excel.name, target_csv.name
+                        "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Status: %s | Support Mgr: %s | Approved Brands: %s | Actual Brands: %s | Tier: %s | isD2C: %s -> SAVED (%s & %s)",
+                        index, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, account_status, support_mgr, approved_brand_cnt, actual_brand_cnt, tier, is_d2c, target_excel.name, target_csv.name
                     )
                     if current_sr_no % chunk_size == 0:
                         logger.info(
