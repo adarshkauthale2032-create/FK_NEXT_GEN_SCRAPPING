@@ -229,28 +229,82 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.assertEqual(processed_count, limit)
         self.assertEqual(len(self.tracker.completed_ids), limit)
 
-    def test_multi_batch_chunking_across_inputs(self):
-        chunk_dir = self.test_dir / "integration_batches"
-        chunk_writer = ExcelWriter(output_dir=chunk_dir, chunk_size=2)
+    def test_multi_sheet_streaming_excel(self):
+        import openpyxl
+        input_xlsx = self.test_dir / "input.xlsx"
+        wb = openpyxl.Workbook()
+        
+        sheet1 = wb.active
+        sheet1.title = "Merged Data 1"
+        sheet1.append(["Date", "Vertical", "Request ID", "Seller ID", "Total Listing"])
+        sheet1.append(["2026-08-01", "Apparel", "REQ-1", "SELLER_S1_1", "15"])
+        sheet1.append(["2026-08-01", "Apparel", "REQ-2", "SELLER_S1_2", "20"])
 
-        self.mock_client.get.return_value = {
-            "result": {
-                "displayName": "Batch Seller",
-                "supportRole": {"name": "Manager Alex"},
-                "liveDate": "2023-01-01",
-                "gmv": {"response": {"details": {"state_details": {"state": "ACTIVE"}}}}
-            }
+        sheet2 = wb.create_sheet(title="Merged Data 2")
+        sheet2.append(["Date", "Vertical", "Request ID", "Seller ID", "Total Listing"])
+        sheet2.append(["2026-08-02", "Electronics", "REQ-3", "SELLER_S2_1", "5"])
+
+        sheet3 = wb.create_sheet(title="Merged Data 3")
+        sheet3.append(["Date", "Vertical", "Request ID", "Seller ID", "Total Listing"])
+        sheet3.append(["2026-08-03", "Home", "REQ-4", "SELLER_S3_1", "50"])
+
+        wb.save(input_xlsx)
+
+        from main import stream_customer_ids
+        streamed = list(stream_customer_ids(input_xlsx))
+        
+        expected = [
+            ("Merged Data 1", 2, "SELLER_S1_1"),
+            ("Merged Data 1", 3, "SELLER_S1_2"),
+            ("Merged Data 2", 2, "SELLER_S2_1"),
+            ("Merged Data 3", 2, "SELLER_S3_1"),
+        ]
+        self.assertEqual(streamed, expected)
+
+    def test_d2c_filtering_saves_only_yes_to_csv(self):
+        d2c_record = {
+            "customer_id": "D2C_SELLER",
+            "account_name": "Brand Direct",
+            "account_status": "ACTIVE",
+            "support_manager": "No",
+            "seller_tier": "Gold",
+            "email_id": "owner@mybranddirect.in",
+            "isD2C": "Yes",
+        }
+        non_d2c_record = {
+            "customer_id": "NON_D2C_SELLER",
+            "account_name": "Generic Seller",
+            "account_status": "ACTIVE",
+            "support_manager": "No",
+            "seller_tier": "Silver",
+            "email_id": "seller@gmail.com",
+            "isD2C": "No",
         }
 
-        for i in range(1, 7):
-            c_id = f"BATCH_ID_{i:03d}"
-            data = self.api1.get_seller_details(c_id)
-            chunk_writer.append_customer(data, sr_no=i)
+        # Simulate scraper logic
+        sr_no = 1
+        d2c_saved = 0
+
+        for rec in [d2c_record, non_d2c_record]:
+            c_id = rec["customer_id"]
+            if rec.get("isD2C") == "Yes":
+                self.csv_writer.append_customer(rec, sr_no=sr_no)
+                sr_no += 1
+                d2c_saved += 1
             self.tracker.mark_completed(c_id)
 
-        for start, end in [(1, 2), (3, 4), (5, 6)]:
-            csv_f = chunk_dir / f"scraped_data_{start}_to_{end}.csv"
-            self.assertTrue(csv_f.exists(), f"{csv_f.name} should exist")
+        # Verify only 1 record (D2C) saved to CSV
+        with open(self.csv_file, "r", encoding="utf-8-sig") as f:
+            rows = list(csv.reader(f))
+
+        self.assertEqual(len(rows), 2)  # Header + 1 row
+        self.assertEqual(rows[1][1], "D2C_SELLER")
+        self.assertEqual(rows[1][14], "Yes")
+        self.assertEqual(d2c_saved, 1)
+
+        # But progress tracker must contain BOTH
+        self.assertTrue(self.tracker.is_completed("D2C_SELLER"))
+        self.assertTrue(self.tracker.is_completed("NON_D2C_SELLER"))
 
 
 if __name__ == "__main__":

@@ -238,55 +238,37 @@ class PlaywrightSessionHandler:
             context.on("request", handle_request)
 
             tab_info = None
-            tab_approvals = None
 
             # ------------------------------------------------------------
-            # Step 1: Keep / Refresh Tab 1 (Seller Info) - for API 1 / API 3 / All
+            # Step 1: Keep / Refresh Tab 1 (Seller Info)
             # ------------------------------------------------------------
-            if target_api in ("api1", "api3", "all"):
-                for page in context.pages:
-                    try:
-                        p_url = page.url.lower()
-                        if "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
-                            if tab_info is None and "dashboard/settings" not in p_url and "sellerdashboard" not in p_url:
-                                tab_info = page
-                    except Exception:
-                        pass
-
-                if tab_info is None:
-                    logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening: %s", target_info_url)
-                    try:
-                        tab_info = await context.new_page()
-                        await tab_info.goto(target_info_url, timeout=12000, wait_until="domcontentloaded")
-                    except Exception as ex1:
-                        logger.debug("[SESSION] Tab 1 open notice: %s", str(ex1))
-                else:
-                    logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Triggering reload...", tab_info.url)
-                    try:
-                        await tab_info.evaluate("() => { try { window.location.reload(); } catch(e){} }")
-                    except Exception as ex1:
-                        logger.debug("[SESSION] Tab 1 reload notice: %s", str(ex1))
-
-                await asyncio.sleep(1.0)
-            else:
-                logger.info("[SESSION] Tab 1 (Seller Info) already valid. Skipping Tab 1 reload for %s.", target_api.upper())
-
-            # ------------------------------------------------------------
-            # Step 2: ALWAYS open Tab 2 (Dashboard Settings) in a brand NEW tab - for API 2 / All
-            # ------------------------------------------------------------
-            if target_api in ("api2", "all"):
-                logger.info("[SESSION] Opening Tab 2 (Dashboard Settings) in a brand new tab: %s", target_approvals_url)
+            for page in context.pages:
                 try:
-                    tab_approvals = await context.new_page()
-                    await tab_approvals.goto(target_approvals_url, timeout=12000, wait_until="domcontentloaded")
-                except Exception as ex2:
-                    logger.debug("[SESSION] Tab 2 open notice: %s", str(ex2))
+                    p_url = page.url.lower()
+                    if "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
+                        tab_info = page
+                        break
+                except Exception:
+                    pass
 
-                # Wait for background API requests to fire on the new tab
-                await asyncio.sleep(2.5)
+            if tab_info is None:
+                logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening: %s", target_info_url)
+                try:
+                    tab_info = await context.new_page()
+                    await tab_info.goto(target_info_url, timeout=12000, wait_until="domcontentloaded")
+                except Exception as ex1:
+                    logger.debug("[SESSION] Tab 1 open notice: %s", str(ex1))
+            else:
+                logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Triggering reload...", tab_info.url)
+                try:
+                    await tab_info.evaluate("() => { try { window.location.reload(); } catch(e){} }")
+                except Exception as ex1:
+                    logger.debug("[SESSION] Tab 1 reload notice: %s", str(ex1))
+
+            await asyncio.sleep(0.5)
 
             # ------------------------------------------------------------
-            # Step 3: Extract All Live Cookies for fkcloud.it domain
+            # Step 2: Extract All Live Cookies for fkcloud.it domain
             # ------------------------------------------------------------
             browser_cookies = await context.cookies([
                 "https://suv-flipkart.seller-support.fkcloud.it",
@@ -307,7 +289,7 @@ class PlaywrightSessionHandler:
                 captured_headers["fk-csrf-token"] = csrf_val
 
             # Read user-agent from page evaluation if not intercepted
-            active_tab = tab_approvals or tab_info
+            active_tab = tab_info
             if active_tab:
                 try:
                     ua = await active_tab.evaluate("() => navigator.userAgent")

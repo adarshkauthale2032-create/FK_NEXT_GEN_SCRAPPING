@@ -31,8 +31,10 @@ def resolve_input_file() -> Path:
 INPUT_FILE_PATH = resolve_input_file()
 INPUT_EXCEL_PATH = INPUT_DIR / "input.xlsx"
 INPUT_TXT_PATH = INPUT_DIR / "input.txt"
-INPUT_SHEET_NAME = "Input Sheet"
-INPUT_COLUMN_NAME = "seller_id"
+INPUT_SHEET_NAMES = ["Merged Data 1", "Merged Data 2", "Merged Data 3"]
+INPUT_SHEET_NAME = "Merged Data 1"
+INPUT_COLUMN_NAMES = ["Seller ID", "seller_id", "SellerID", "Customer ID", "customer_id", "id"]
+INPUT_COLUMN_NAME = "Seller ID"
 OUTPUT_CSV_PATH = OUTPUT_DIR / "scraped_data.csv"
 OUTPUT_EXCEL_PATH = OUTPUT_DIR / "scraped_data.xlsx"
 PROGRESS_FILE_PATH = OUTPUT_DIR / "progress.json"
