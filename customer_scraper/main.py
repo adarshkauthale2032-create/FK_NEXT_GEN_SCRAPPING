@@ -416,13 +416,15 @@ def main():
     if max_limit:
         logger.info("Target for this session: Scraping next %d new seller records.", max_limit)
 
+    consecutive_auth_failures = 0
+
     try:
         for index in range(start_idx, total_ids):
             customer_id = customer_ids[index]
             display_pos = index + 1
 
             if max_limit and processed_in_session >= max_limit:
-                logger.info("🎉 [SESSION COMPLETE] Successfully scraped target of %d sellers in this run. Stopping script cleanly.", max_limit)
+                logger.info("🎉 [TARGET ACHIEVED] Successfully completed batch of %d sellers in this session. All done!", max_limit)
                 break
 
             # Check if customer was already completed
@@ -431,74 +433,97 @@ def main():
                 skipped_count += 1
                 continue
 
-            try:
-                # Calculate current batch metrics and target paths
-                batch_num = ((current_sr_no - 1) // chunk_size) + 1
-                batch_pos = ((current_sr_no - 1) % chunk_size) + 1
-                target_csv = csv_writer.get_csv_path_for_sr(current_sr_no)
+            max_seller_retries = 3
+            for seller_attempt in range(1, max_seller_retries + 1):
+                try:
+                    # Calculate current batch metrics and target paths
+                    batch_num = ((current_sr_no - 1) // chunk_size) + 1
+                    batch_pos = ((current_sr_no - 1) % chunk_size) + 1
+                    target_csv = csv_writer.get_csv_path_for_sr(current_sr_no)
 
-                # Step 1: Execute API #1 (Customer & Seller Details)
-                api1_data = api1.get_seller_details(customer_id)
-                account_name = api1_data.get("account_name", "")
-                account_status = api1_data.get("account_status", "")
-                support_mgr = api1_data.get("support_manager", "No")
-                tier = api1_data.get("seller_tier", "")
+                    # Step 1: Execute API #1 (Customer & Seller Details)
+                    api1_data = api1.get_seller_details(customer_id)
+                    account_name = api1_data.get("account_name", "")
+                    account_status = api1_data.get("account_status", "")
+                    support_mgr = api1_data.get("support_manager", "No")
+                    tier = api1_data.get("seller_tier", "")
 
-                # Step 2: Execute API #2 (Approval Store & Brand Count Analysis)
-                api2_data = api2.get_brand_approval_details(customer_id)
-                approved_brand_cnt = api2_data.get("approved_brand", 0)
-                actual_brand_cnt = api2_data.get("actual_brand_count", 0)
+                    # Step 2: Execute API #2 (Approval Store & Brand Count Analysis)
+                    api2_data = api2.get_brand_approval_details(customer_id)
+                    approved_brand_cnt = api2_data.get("approved_brand", 0)
+                    actual_brand_cnt = api2_data.get("actual_brand_count", 0)
 
-                # Step 3: Execute API #3 (Seller Contact Details)
-                api3_data = api3.get_seller_contacts(customer_id)
+                    # Step 3: Execute API #3 (Seller Contact Details)
+                    api3_data = api3.get_seller_contacts(customer_id)
 
-                # Step 4: Combine Results
-                combined_record = {
-                    **api1_data,
-                    **api2_data,
-                    **api3_data,
-                }
+                    # Step 4: Combine Results
+                    combined_record = {
+                        **api1_data,
+                        **api2_data,
+                        **api3_data,
+                    }
 
-                # Step 5: Save directly to CSV
-                save_success = csv_writer.append_customer(combined_record, sr_no=current_sr_no)
-                if save_success:
-                    progress_tracker.mark_completed(customer_id)
-                    is_d2c = combined_record.get("isD2C") or combined_record.get("is_d2c", "No")
-                    logger.info(
-                        "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Status: %s | Support Mgr: %s | Approved Brands: %s | Actual Brands: %s | Tier: %s | isD2C: %s -> SAVED (%s)",
-                        display_pos, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, account_status, support_mgr, approved_brand_cnt, actual_brand_cnt, tier, is_d2c, target_csv.name
-                    )
-                    if current_sr_no % chunk_size == 0:
+                    # Step 5: Save directly to CSV
+                    save_success = csv_writer.append_customer(combined_record, sr_no=current_sr_no)
+                    if save_success:
+                        progress_tracker.mark_completed(customer_id)
+                        is_d2c = combined_record.get("isD2C") or combined_record.get("is_d2c", "No")
                         logger.info(
-                            "🎉 [BATCH COMPLETED] Batch #%d (%d sellers) fully saved to %s!",
-                            batch_num, chunk_size, target_csv.name
+                            "[Progress %d/%d | Batch #%d (%d/%d)] ID: %s | Account: %s | Status: %s | Support Mgr: %s | Approved Brands: %s | Actual Brands: %s | Tier: %s | isD2C: %s -> SAVED (%s)",
+                            display_pos, total_ids, batch_num, batch_pos, chunk_size, customer_id, account_name, account_status, support_mgr, approved_brand_cnt, actual_brand_cnt, tier, is_d2c, target_csv.name
                         )
-                    current_sr_no += 1
-                    processed_in_session += 1
-                    if max_limit and processed_in_session >= max_limit:
-                        logger.info("🎉 [SESSION COMPLETE] Successfully scraped target of %d sellers in this run. Stopping script cleanly.", max_limit)
+                        if current_sr_no % chunk_size == 0:
+                            logger.info(
+                                "🎉 [BATCH COMPLETED] Batch #%d (%d sellers) fully saved to %s!",
+                                batch_num, chunk_size, target_csv.name
+                            )
+                        current_sr_no += 1
+                        processed_in_session += 1
+                        consecutive_auth_failures = 0
                         break
-                else:
-                    logger.error("Failed to persist data for customer ID: %s", customer_id)
+                    else:
+                        logger.error("Failed to persist data for customer ID: %s", customer_id)
+                        break
 
-            except AuthExpiredError as auth_err:
-                logger.critical("[CRITICAL] Authentication error on customer ID %s: %s", customer_id, str(auth_err))
-                print("\n" + "=" * 75)
-                print("❌ [SCRIPT STOPPED] Failed to retrieve valid Flipkart session.")
-                print(f"   Reason: {str(auth_err)}")
-                print("   Action: Please open Chrome, make sure you are logged into the Flipkart")
-                print("           Seller Portal, and rerun the script:")
-                print("           python main.py")
-                print("=" * 75 + "\n")
-                break
+                except AuthExpiredError as auth_err:
+                    consecutive_auth_failures += 1
+                    logger.warning(
+                        "[AUTH EXPIRY] Session expired while processing %s (Attempt %d/%d). Refreshing session and resuming...",
+                        customer_id, seller_attempt, max_seller_retries
+                    )
+                    try:
+                        auth_manager.refresh_session(seller_id=customer_id)
+                    except Exception as refresh_err:
+                        logger.error("Automatic session refresh failed: %s", str(refresh_err))
 
-            except APIError as api_err:
-                failed_count += 1
-                logger.warning("[WARNING] API error for customer ID %s: %s. Customer skipped.", customer_id, str(api_err))
+                    # If multiple consecutive auth failures occur (e.g. user completely logged out in Chrome)
+                    if seller_attempt >= max_seller_retries:
+                        if consecutive_auth_failures >= 5:
+                            logger.critical("[CRITICAL] Multiple consecutive authentication failures. Pausing for user login.")
+                            print("\n" + "=" * 75)
+                            print("⚠️ [SCRAPING PAUSED] Please ensure you are logged into Flipkart in Chrome.")
+                            print("   Press Enter to resume scraping after verifying login:")
+                            print("=" * 75 + "\n")
+                            try:
+                                input("Press Enter to resume...")
+                                consecutive_auth_failures = 0
+                                auth_manager.refresh_session(seller_id=customer_id)
+                            except (EOFError, KeyboardInterrupt):
+                                break
+                        else:
+                            failed_count += 1
+                            logger.warning("Skipping customer %s after %d failed auth attempts. Continuing to next seller...", customer_id, max_seller_retries)
+                            break
 
-            except Exception as unexp_err:
-                failed_count += 1
-                logger.error("[ERROR] Unexpected error for customer ID %s: %s", customer_id, str(unexp_err))
+                except APIError as api_err:
+                    failed_count += 1
+                    logger.warning("[WARNING] API error for customer ID %s: %s. Continuing to next seller...", customer_id, str(api_err))
+                    break
+
+                except Exception as unexp_err:
+                    failed_count += 1
+                    logger.error("[ERROR] Unexpected error for customer ID %s: %s. Continuing to next seller...", customer_id, str(unexp_err))
+                    break
 
     except KeyboardInterrupt:
         logger.warning("Scraper execution interrupted by user (KeyboardInterrupt). Shutting down cleanly...")
