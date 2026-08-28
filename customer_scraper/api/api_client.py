@@ -5,6 +5,7 @@ Handles HTTP requests (GET, POST), connection timeouts, exponential backoff retr
 session management, auth expiry detection, and standard JSON response parsing.
 """
 
+import json
 import logging
 import time
 from typing import Any, Dict, Optional, Union
