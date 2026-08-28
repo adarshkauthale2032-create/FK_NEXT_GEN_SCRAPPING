@@ -41,6 +41,20 @@ class TestAuthManager(unittest.TestCase):
         self.assertEqual(auth.headers.get("FK-CSRF-TOKEN"), "csrf_token_abc")
         self.assertEqual(auth.session.cookies.get("SESSION_ID"), "mock_cookie_12345")
 
+    def test_clear_session_wipes_file(self):
+        auth = AuthManager(session_path=self.session_path)
+        auth.cookies = {"test_c": "123"}
+        auth.headers = {"test_h": "456"}
+        auth._save_to_file()
+
+        auth.clear_session()
+        self.assertEqual(auth.cookies, {})
+        self.assertEqual(auth.headers, {})
+        with open(self.session_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            self.assertEqual(data.get("cookies"), {})
+            self.assertEqual(data.get("headers"), {})
+
     def test_refresh_session_persists_session(self):
         auth = AuthManager(session_path=self.session_path)
 
@@ -95,10 +109,8 @@ class TestPlaywrightSessionHandler(unittest.TestCase):
     def test_handler_initialization(self):
         handler = PlaywrightSessionHandler(
             session_file=self.session_file,
-            refresh_interval=600,
         )
         self.assertEqual(handler.session_file, self.session_file)
-        self.assertEqual(handler.refresh_interval, 600)
 
 
 if __name__ == "__main__":

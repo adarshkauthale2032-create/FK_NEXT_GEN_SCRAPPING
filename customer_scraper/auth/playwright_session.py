@@ -232,31 +232,27 @@ class PlaywrightSessionHandler:
             context.on("request", handle_request)
 
             # ------------------------------------------------------------
-            # Step 1: Detect Open Tabs for Tab 1 (Seller Info) & Tab 2 (Dashboard Settings)
+            # Step 1: Detect Open Tab 1 (Seller Info)
             # ------------------------------------------------------------
             tab_info = None
-            tab_approvals = None
 
             for page in context.pages:
                 try:
                     p_url = page.url.lower()
-                    if "dashboard/settings" in p_url or "sellerdashboard" in p_url or "trackapprovalrequest" in p_url:
-                        if tab_approvals is None:
-                            tab_approvals = page
-                    elif "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
-                        if tab_info is None:
+                    if "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
+                        if tab_info is None and "dashboard/settings" not in p_url and "sellerdashboard" not in p_url:
                             tab_info = page
                 except Exception:
                     pass
 
             # ------------------------------------------------------------
-            # Step 2: Non-blocking refresh on Tab 1 (Seller Info)
+            # Step 2: Keep / Refresh Tab 1 (Seller Info)
             # ------------------------------------------------------------
             if tab_info is None:
                 logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening: %s", target_info_url)
                 try:
                     tab_info = await context.new_page()
-                    await tab_info.goto(target_info_url, timeout=8000, wait_until="domcontentloaded")
+                    await tab_info.goto(target_info_url, timeout=12000, wait_until="domcontentloaded")
                 except Exception as ex1:
                     logger.debug("[SESSION] Tab 1 open notice: %s", str(ex1))
             else:
@@ -269,24 +265,17 @@ class PlaywrightSessionHandler:
             await asyncio.sleep(1.0)
 
             # ------------------------------------------------------------
-            # Step 3: Non-blocking refresh on Tab 2 (Dashboard Settings)
+            # Step 3: ALWAYS open Tab 2 (Dashboard Settings) in a brand NEW tab
             # ------------------------------------------------------------
-            if tab_approvals is None or tab_approvals == tab_info:
-                logger.info("[SESSION] Tab 2 (Dashboard Settings) not open. Opening: %s", target_approvals_url)
-                try:
-                    tab_approvals = await context.new_page()
-                    await tab_approvals.goto(target_approvals_url, timeout=8000, wait_until="domcontentloaded")
-                except Exception as ex2:
-                    logger.debug("[SESSION] Tab 2 open notice: %s", str(ex2))
-            else:
-                logger.info("[SESSION] Found Tab 2 (Dashboard Settings): %s. Triggering reload...", tab_approvals.url)
-                try:
-                    await tab_approvals.evaluate("() => { try { window.location.reload(); } catch(e){} }")
-                except Exception as ex2:
-                    logger.debug("[SESSION] Tab 2 reload notice: %s", str(ex2))
+            logger.info("[SESSION] Opening Tab 2 (Dashboard Settings) in a brand new tab: %s", target_approvals_url)
+            try:
+                tab_approvals = await context.new_page()
+                await tab_approvals.goto(target_approvals_url, timeout=12000, wait_until="domcontentloaded")
+            except Exception as ex2:
+                logger.debug("[SESSION] Tab 2 open notice: %s", str(ex2))
 
-            # Wait for background API requests to fire
-            await asyncio.sleep(2.0)
+            # Wait for background API requests to fire on the new tab
+            await asyncio.sleep(2.5)
 
             # ------------------------------------------------------------
             # Step 4: Extract All Cookies for fkcloud.it domain
@@ -320,20 +309,13 @@ class PlaywrightSessionHandler:
                     pass
 
         # ------------------------------------------------------------
-        # Save to session.json in identical schema
+        # Save to session.json with fresh extracted session data
         # ------------------------------------------------------------
         if captured_cookies:
-            # Preserve existing session values if new capture missed any
-            existing_session = self.read_current_session_file()
-            existing_cookies = existing_session.get("cookies", {})
-            existing_headers = existing_session.get("headers", {})
-
-            merged_cookies = {**existing_cookies, **captured_cookies}
-            merged_headers = {**existing_headers, **captured_headers}
-
+            # Construct fresh session data
             session_data = {
-                "cookies": merged_cookies,
-                "headers": merged_headers,
+                "cookies": captured_cookies,
+                "headers": captured_headers,
             }
 
             self.session_file.parent.mkdir(parents=True, exist_ok=True)
@@ -342,15 +324,15 @@ class PlaywrightSessionHandler:
 
             print()
             print("=" * 70)
-            print("[SESSION] session.json CREATED / UPDATED")
+            print("[SESSION] session.json UPDATED WITH FRESH TOKENS")
             print(f"[SESSION] File:    {self.session_file.resolve()}")
             print(f"[SESSION] Seller:  {active_seller_id}")
-            print(f"[SESSION] Cookies: {len(merged_cookies)} captured")
-            print(f"[SESSION] Headers: {len(merged_headers)} captured")
-            if "connect.sid" in merged_cookies:
-                print(f"[SESSION] connect.sid: {merged_cookies['connect.sid'][:25]}...")
-            if "FK-CSRF-TOKEN" in merged_headers:
-                print(f"[SESSION] CSRF Token:  {merged_headers['FK-CSRF-TOKEN']}")
+            print(f"[SESSION] Cookies: {len(captured_cookies)} captured")
+            print(f"[SESSION] Headers: {len(captured_headers)} captured")
+            if "connect.sid" in captured_cookies:
+                print(f"[SESSION] connect.sid: {captured_cookies['connect.sid'][:25]}...")
+            if "FK-CSRF-TOKEN" in captured_headers:
+                print(f"[SESSION] CSRF Token:  {captured_headers['FK-CSRF-TOKEN']}")
             print("=" * 70)
             print()
 

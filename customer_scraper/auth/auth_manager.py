@@ -117,39 +117,56 @@ class AuthManager:
 
         return loaded
 
+    def clear_session(self) -> None:
+        """Completely clears session data in memory and resets session.json on disk."""
+        self.cookies = {}
+        self.headers = {}
+        self.session = requests.Session()
+        try:
+            self.session_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.session_path, "w", encoding="utf-8") as f:
+                json.dump({"cookies": {}, "headers": {}}, f, indent=4)
+            logger.info("[AUTH] Cleared session.json file completely on session expiry.")
+        except Exception as e:
+            logger.warning("[AUTH] Could not clear session file: %s", str(e))
+
     def refresh_session(self, seller_id: Optional[str] = None) -> bool:
         """
         Refreshes session when expired by:
-        1. Connecting to Chrome via CDP.
-        2. Refreshing the dynamic Flipkart page (https://suv-flipkart.seller-support.fkcloud.it/#app/seller/{seller_id}/info).
-        3. Intercepting automatic API requests for headers (including FK-CSRF-TOKEN) and extracting cookies.
-        4. Updating session.json and internal requests session.
+        1. Clearing session.json file completely.
+        2. Connecting to Chrome via CDP.
+        3. Refreshing Tab 1 and opening Tab 2 in a brand new tab.
+        4. Extracting fresh cookies and headers and saving to session.json.
         """
-        logger.info("[AUTH] Session expired. Initiating browser refresh & session re-extraction (Seller ID: %s)...", seller_id or "default")
+        logger.info("[AUTH] Session expired. Wiping session.json and initiating browser re-extraction (Seller ID: %s)...", seller_id or "default")
+
+        # Wipe session.json completely first
+        self.clear_session()
 
         try:
             session_data = self.playwright_handler.refresh_and_extract_session(seller_id=seller_id)
-            if session_data:
+            if session_data and session_data.get("cookies"):
                 new_cookies = session_data.get("cookies", {})
                 new_headers = session_data.get("headers", {})
 
-                if new_cookies:
-                    self.cookies.update(new_cookies)
-                    self.session.cookies.update(new_cookies)
+                # Replace in-memory dictionaries completely
+                self.cookies = new_cookies
+                self.headers = new_headers
 
-                if new_headers:
-                    self.headers.update(new_headers)
-                    self.session.headers.update(new_headers)
+                # Reset requests session to wipe any stale/expired cookies
+                self.session = requests.Session()
+                self.session.cookies.update(new_cookies)
+                self.session.headers.update(new_headers)
 
                 # Ensure CSRF token header
-                if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies and "FK-CSRF-TOKEN" not in self.headers:
+                if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies:
                     csrf_val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
                     self.headers["FK-CSRF-TOKEN"] = csrf_val
                     self.headers["fk-csrf-token"] = csrf_val
                     self.session.headers["FK-CSRF-TOKEN"] = csrf_val
                     self.session.headers["fk-csrf-token"] = csrf_val
 
-                logger.info("[AUTH] Session successfully refreshed and updated in memory.")
+                logger.info("[AUTH] Session successfully refreshed with clean state (%d cookies, %d headers).", len(new_cookies), len(new_headers))
                 return True
         except Exception as e:
             logger.error("[AUTH] CDP session refresh failed: %s", str(e))
