@@ -117,29 +117,28 @@ class AuthManager:
 
         return loaded
 
+    def get_cookie_header_string(self) -> str:
+        """
+        Returns all active cookies formatted as a single 'Cookie' header string.
+        Guarantees that subdomains and endpoints receive all captured session cookies.
+        """
+        if not self.cookies:
+            return ""
+        return "; ".join(f"{k}={v}" for k, v in self.cookies.items() if v is not None and str(v).strip())
+
     def clear_session(self) -> None:
-        """Completely clears session data in memory and resets session.json on disk."""
+        """Clears session in memory without wiping disk file prematurely."""
         self.cookies = {}
         self.headers = {}
         self.session = requests.Session()
-        try:
-            self.session_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.session_path, "w", encoding="utf-8") as f:
-                json.dump({"cookies": {}, "headers": {}}, f, indent=4)
-            logger.info("[AUTH] Cleared session.json file completely on session expiry.")
-        except Exception as e:
-            logger.warning("[AUTH] Could not clear session file: %s", str(e))
 
     def refresh_session(self, seller_id: Optional[str] = None, target_api: str = "all") -> bool:
         """
         Refreshes session when expired using the fixed standard seller ID (218598a2b41c4bcd).
+        Saves the new session to session.json with forced overwrite and updates memory state.
         """
         target_seller = str(seller_id).strip() if seller_id else DEFAULT_SELLER_ID
         logger.info("[AUTH] Session refresh requested for seller ID %s (Target API: %s)...", target_seller, target_api.upper())
-
-        # If it's a full refresh / initial start, clear session first
-        if target_api == "all":
-            self.clear_session()
 
         try:
             session_data = self.playwright_handler.refresh_and_extract_session(seller_id=target_seller, target_api=target_api)
@@ -147,17 +146,16 @@ class AuthManager:
                 new_cookies = session_data.get("cookies", {})
                 new_headers = session_data.get("headers", {})
 
-                # Update in-memory dictionaries
+                # 1. Update in-memory state
                 self.cookies.update(new_cookies)
                 self.headers.update(new_headers)
 
-                # Reset or update requests session
-                if target_api == "all":
-                    self.session = requests.Session()
+                # 2. Fresh requests.Session instance
+                self.session = requests.Session()
                 self.session.cookies.update(new_cookies)
                 self.session.headers.update(new_headers)
 
-                # Ensure CSRF token header
+                # 3. Ensure CSRF token header
                 if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies:
                     csrf_val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
                     self.headers["FK-CSRF-TOKEN"] = csrf_val
@@ -165,7 +163,14 @@ class AuthManager:
                     self.session.headers["FK-CSRF-TOKEN"] = csrf_val
                     self.session.headers["fk-csrf-token"] = csrf_val
 
-                logger.info("[AUTH] Session successfully refreshed (%d cookies, %d headers).", len(self.cookies), len(self.headers))
+                # 4. Save and force overwrite session.json on disk
+                self._save_to_file()
+
+                logger.info(
+                    "[AUTH] Session successfully refreshed and persisted (%d cookies, %d headers). Ready for scraping.",
+                    len(self.cookies),
+                    len(self.headers),
+                )
                 return True
         except Exception as e:
             logger.error("[AUTH] CDP session refresh failed: %s", str(e))
@@ -191,12 +196,19 @@ class AuthManager:
         )
 
     def _save_to_file(self) -> None:
-        """Saves current cookies and headers to session.json."""
+        """Saves current cookies and headers to session.json with forced overwrite."""
         try:
             data = {"cookies": self.cookies, "headers": self.headers}
             self.session_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.session_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4, ensure_ascii=False)
+            # Try atomic replace with temp file, fallback to direct write
+            tmp_path = self.session_path.with_suffix(f".tmp_{os.getpid()}")
+            try:
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=4, ensure_ascii=False)
+                os.replace(tmp_path, self.session_path)
+            except Exception:
+                with open(self.session_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=4, ensure_ascii=False)
             logger.info("Saved active session configuration to %s", self.session_path.name)
         except Exception as e:
             logger.error("Failed to save session configuration: %s", str(e))

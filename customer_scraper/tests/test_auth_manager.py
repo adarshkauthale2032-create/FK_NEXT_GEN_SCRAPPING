@@ -41,7 +41,7 @@ class TestAuthManager(unittest.TestCase):
         self.assertEqual(auth.headers.get("FK-CSRF-TOKEN"), "csrf_token_abc")
         self.assertEqual(auth.session.cookies.get("SESSION_ID"), "mock_cookie_12345")
 
-    def test_clear_session_wipes_file(self):
+    def test_clear_session_clears_memory(self):
         auth = AuthManager(session_path=self.session_path)
         auth.cookies = {"test_c": "123"}
         auth.headers = {"test_h": "456"}
@@ -50,10 +50,6 @@ class TestAuthManager(unittest.TestCase):
         auth.clear_session()
         self.assertEqual(auth.cookies, {})
         self.assertEqual(auth.headers, {})
-        with open(self.session_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            self.assertEqual(data.get("cookies"), {})
-            self.assertEqual(data.get("headers"), {})
 
     def test_refresh_session_persists_session(self):
         auth = AuthManager(session_path=self.session_path)
