@@ -175,6 +175,40 @@ class TestExcelWriter20Columns(unittest.TestCase):
         self.assertEqual(row[18], "Yes")              # Unique Email
         self.assertEqual(row[19], "Yes")              # isD2C
 
+    def test_format_customer_rows_non_d2c_record(self):
+        """Tests that non-D2C records are properly formatted with isD2C = 'No' and saved."""
+        data = {
+            "customer_id": "c9876543210",
+            "account_name": "Generic Seller",
+            "account_status": "ACTIVE",
+            "support_manager": "No",
+            "seller_tier": "Bronze",
+            "signed_up_date": "2023-05-10",
+            "live_date": "2023-05-20",
+            "approved_brand": 0,
+            "actual_brand_count": 0,
+            "request_id": "",
+            "brand_owner": "",
+            "document_type": "",
+            "brand_website_link": "",
+            "mobile_number": "9123456780",
+            "registered_mobile_number": "9123456780",
+            "email_id": "seller@gmail.com",
+            "registered_email_id": "seller@gmail.com",
+            "unique_email": "No",
+            "isD2C": "No",
+        }
+
+        rows = self.writer._format_customer_rows(data, sr_no=2)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(len(row), 20)
+        self.assertEqual(row[0], 2)
+        self.assertEqual(row[1], "c9876543210")
+        self.assertEqual(row[18], "No")   # Unique Email
+        self.assertEqual(row[19], "No")   # isD2C
+
 
 if __name__ == "__main__":
     unittest.main()
+
