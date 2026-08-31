@@ -378,18 +378,18 @@ def read_customer_ids(file_path: Path) -> List[str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Flipkart Customer Scraping Automation (Fast D2C Mode)")
+    parser = argparse.ArgumentParser(description="Flipkart Customer Scraping Automation")
     parser.add_argument("--refresh-session", action="store_true", help="Refresh Flipkart tab in Chrome and update session.json")
     parser.add_argument("--monitor-session", action="store_true", help="Run 10-minute browser tab keepalive refresh loop")
     parser.add_argument("--seller-id", type=str, default=DEFAULT_SELLER_ID, help=f"Specific seller ID for session refresh / keepalive (default: {DEFAULT_SELLER_ID})")
     parser.add_argument("--import-curl", type=str, help="Import session headers and cookies from a copied cURL command")
     parser.add_argument("--set-cookie", type=str, help="Set cookie string directly")
     parser.add_argument("--chunk-size", type=int, default=CHUNK_SIZE, help=f"Number of sellers per output batch file (default: {CHUNK_SIZE})")
-    parser.add_argument("--limit", type=int, default=DEFAULT_SCRAPE_LIMIT, help=f"Target number of D2C ('Yes') records to scrape and save (default: {DEFAULT_SCRAPE_LIMIT})")
+    parser.add_argument("--limit", type=int, default=DEFAULT_SCRAPE_LIMIT, help=f"Target number of records to scrape and save (default: {DEFAULT_SCRAPE_LIMIT})")
     args = parser.parse_args()
 
     chunk_size = args.chunk_size or CHUNK_SIZE
-    max_d2c_limit = args.limit or DEFAULT_SCRAPE_LIMIT
+    max_scrape_limit = args.limit or DEFAULT_SCRAPE_LIMIT
 
     # 1. Initialize Authentication Manager
     auth_manager = AuthManager(SESSION_CONFIG_PATH)
@@ -425,10 +425,10 @@ def main():
         return
 
     logger.info("==========================================")
-    logger.info("START - Flipkart Customer Scraping (Fast D2C Mode)")
-    logger.info("  Mode: API #1 (Details) + API #3 (Contacts)")
-    logger.info("  Filter: Exclusively D2C ('Yes') saved to CSV")
-    logger.info("  Target D2C Limit: %d records", max_d2c_limit)
+    logger.info("START - Flipkart Customer Scraping Automation")
+    logger.info("  Mode: API #1 (Details) + API #2 (Approvals & QnA) + API #3 (Contacts)")
+    logger.info("  Save Policy: ALL processed records saved (with isD2C: Yes / No)")
+    logger.info("  Target Limit: %d records", max_scrape_limit)
     logger.info("  Input File: %s", INPUT_FILE_PATH.name)
     logger.info("==========================================")
 
@@ -461,26 +461,28 @@ def main():
     # 3. Flush any pending unpersisted data if present
     csv_writer.flush_pending()
 
-    # Calculate current sequential Sr No counter for saved D2C records
+    # Calculate current sequential Sr No counter for saved records
     current_sr_no = csv_writer.get_current_customer_count() + 1
 
-    d2c_saved_in_session = 0
+    total_saved_in_session = 0
+    d2c_yes_count = 0
+    d2c_no_count = 0
     total_evaluated_in_session = 0
     skipped_count = 0
     failed_count = 0
 
     logger.info("Already evaluated sellers in progress: %d", len(progress_tracker.completed_ids))
-    logger.info("Current saved D2C rows in CSV: %d (Next Sr No: %d)", current_sr_no - 1, current_sr_no)
-    logger.info("Target for this session: Collect %d D2C ('Yes') records", max_d2c_limit)
+    logger.info("Current total rows in CSV: %d (Next Sr No: %d)", current_sr_no - 1, current_sr_no)
+    logger.info("Target for this session: Collect %d records", max_scrape_limit)
 
     consecutive_auth_failures = 0
 
     try:
         for sheet_name, row_idx, customer_id in stream_customer_ids(INPUT_FILE_PATH):
-            if max_d2c_limit and d2c_saved_in_session >= max_d2c_limit:
+            if max_scrape_limit and total_saved_in_session >= max_scrape_limit:
                 logger.info(
-                    "🎉 [TARGET ACHIEVED] Successfully saved %d D2C ('Yes') records in this session! All done!",
-                    d2c_saved_in_session
+                    "🎉 [TARGET ACHIEVED] Successfully processed and saved %d records in this session! All done!",
+                    total_saved_in_session
                 )
                 break
 
@@ -539,36 +541,33 @@ def main():
                         "is_d2c": is_d2c_str,
                     }
 
-                    # Step 4: Save ONLY D2C 'Yes' records to CSV/Excel
-                    if is_d2c_yes:
-                        save_success = csv_writer.append_customer(combined_record, sr_no=current_sr_no)
-                        if save_success:
-                            progress_tracker.mark_completed(customer_id, sheet_name=sheet_name, row_index=row_idx)
-                            d2c_saved_in_session += 1
-                            logger.info(
-                                "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Appr: %s | Act: %s | ReqID: %s | BrOwner: %s | Doc: %s | Web: %s | UniqEmail: %s | isD2C: YES -> SAVED TO CSV (D2C Saved: %d/%d | Sr No: %d | File: %s)",
-                                sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, approved_brand, actual_brand_count, request_id or "-", brand_owner or "-", document_type or "-", brand_website_link or "-", unique_email, d2c_saved_in_session, max_d2c_limit, current_sr_no, target_csv.name
-                            )
-                            if d2c_saved_in_session % 100 == 0:
-                                logger.info(
-                                    "💾 [100-ROW CHECKPOINT] %d D2C rows flushed to disk in %s (Current Sr No: %d).",
-                                    d2c_saved_in_session, target_csv.name, current_sr_no
-                                )
-                            if current_sr_no % chunk_size == 0:
-                                logger.info(
-                                    "🎉 [BATCH COMPLETED] Batch #%d (%d D2C sellers) fully saved to %s!",
-                                    batch_num, chunk_size, target_csv.name
-                                )
-                            current_sr_no += 1
-                        else:
-                            logger.error("Failed to persist data for customer ID: %s", customer_id)
-                    else:
-                        # Non-D2C: Mark completed in progress tracker, skip CSV persistence
+                    # Step 4: Save ALL processed records to CSV/Excel
+                    save_success = csv_writer.append_customer(combined_record, sr_no=current_sr_no)
+                    if save_success:
                         progress_tracker.mark_completed(customer_id, sheet_name=sheet_name, row_index=row_idx)
+                        total_saved_in_session += 1
+                        if is_d2c_yes:
+                            d2c_yes_count += 1
+                        else:
+                            d2c_no_count += 1
+
                         logger.info(
-                            "[Sheet: %s | Row: %d] ID: %s | Account: %s | Appr: %s | Act: %s | ReqID: %s | Doc: %s | UniqEmail: %s | isD2C: NO -> SKIPPED CSV",
-                            sheet_name, row_idx, customer_id, account_name, approved_brand, actual_brand_count, request_id or "-", document_type or "-", unique_email
+                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Appr: %s | Act: %s | ReqID: %s | BrOwner: %s | Doc: %s | Web: %s | UniqEmail: %s | isD2C: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
+                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, approved_brand, actual_brand_count, request_id or "-", brand_owner or "-", document_type or "-", brand_website_link or "-", unique_email, is_d2c_str, total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
                         )
+                        if total_saved_in_session % 100 == 0:
+                            logger.info(
+                                "💾 [100-ROW CHECKPOINT] %d rows flushed to disk in %s (Current Sr No: %d, D2C Yes: %d, Non-D2C: %d).",
+                                total_saved_in_session, target_csv.name, current_sr_no, d2c_yes_count, d2c_no_count
+                            )
+                        if current_sr_no % chunk_size == 0:
+                            logger.info(
+                                "🎉 [BATCH COMPLETED] Batch #%d (%d sellers) fully saved to %s!",
+                                batch_num, chunk_size, target_csv.name
+                            )
+                        current_sr_no += 1
+                    else:
+                        logger.error("Failed to persist data for customer ID: %s", customer_id)
 
                     total_evaluated_in_session += 1
                     consecutive_auth_failures = 0
@@ -622,12 +621,14 @@ def main():
         
         logger.info("==========================================")
         logger.info("Scraping Summary:")
-        logger.info("  D2C ('Yes') saved in this session: %d / %d", d2c_saved_in_session, max_d2c_limit)
+        logger.info("  Total saved in this session:       %d / %d", total_saved_in_session, max_scrape_limit)
+        logger.info("  - D2C ('Yes') records:             %d", d2c_yes_count)
+        logger.info("  - Non-D2C ('No') records:          %d", d2c_no_count)
         logger.info("  Total evaluated in this session:   %d", total_evaluated_in_session)
         logger.info("  Skipped (already evaluated):       %d", skipped_count)
         logger.info("  Failed:                            %d", failed_count)
         logger.info("  Total evaluated sellers tracked:   %d", len(progress_tracker.completed_ids))
-        logger.info("  Total saved D2C rows in CSV:       %d", current_sr_no - 1)
+        logger.info("  Total rows across CSV datasets:    %d", current_sr_no - 1)
         logger.info("  Output Directory:                  %s", OUTPUT_DIR)
         logger.info("==========================================")
 
