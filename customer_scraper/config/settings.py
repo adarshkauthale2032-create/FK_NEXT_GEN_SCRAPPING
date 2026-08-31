@@ -124,6 +124,7 @@ CSV_COLUMNS = [
     "Brand Owner",
     "Document Type",
     "Brand Website Link",
+    "Instagram URL",
     "Mobile Number",
     "Registered Mobile Number",
     "Email ID",

@@ -44,6 +44,7 @@ from api.api_client import APIClient, APIError
 from scrapers.api1_scraper import API1Scraper
 from scrapers.api2_scraper import API2Scraper
 from scrapers.api3_scraper import API3Scraper
+from scrapers.instagram_scraper import InstagramScraper
 from excel.excel_writer import CSVWriter, ExcelWriter
 
 
@@ -448,6 +449,7 @@ def main():
     api1 = API1Scraper(api_client)
     api2 = API2Scraper(api_client)
     api3 = API3Scraper(api_client)
+    insta_scraper = InstagramScraper()
     
     csv_writer = CSVWriter(output_dir=OUTPUT_DIR, chunk_size=chunk_size)
     excel_writer = csv_writer
@@ -523,25 +525,32 @@ def main():
                     unique_email = api3_data.get("unique_email", "No")
                     is_email_d2c = str(unique_email).strip().lower() == "yes"
 
+                    # Step 4: Search Instagram for Account Name / Brand Name
+                    search_target = account_name or (api2_data.get("unique_brands", [""])[0] if api2_data.get("unique_brands") else "")
+                    instagram_url = insta_scraper.search_instagram(search_target) or ""
+                    is_insta_d2c = bool(instagram_url and str(instagram_url).strip().lower() not in ("null", "none", "", "n/a", "na"))
+
                     # Multi-Criteria isD2C Evaluation:
                     # 1. Unique Email == 'Yes' OR
                     # 2. Document Type in ('BAL', 'TM') OR
-                    # 3. Brand Website Link is available and valid
-                    is_d2c_yes = bool(is_email_d2c or brand_is_d2c)
+                    # 3. Brand Website Link is available and valid OR
+                    # 4. Instagram Profile is found
+                    is_d2c_yes = bool(is_email_d2c or brand_is_d2c or is_insta_d2c)
                     is_d2c_str = "Yes" if is_d2c_yes else "No"
 
-                    # Combine Results across all APIs
+                    # Combine Results across all APIs and Scrapers
                     combined_record = {
                         **api1_data,
                         **api2_data,
                         **api3_data,
+                        "instagram_url": instagram_url,
                         "unique_email": unique_email,
                         "unique_email_yes_no": unique_email,
                         "isD2C": is_d2c_str,
                         "is_d2c": is_d2c_str,
                     }
 
-                    # Step 4: Save ALL processed records to CSV/Excel
+                    # Step 5: Save ALL processed records to CSV/Excel
                     save_success = csv_writer.append_customer(combined_record, sr_no=current_sr_no)
                     if save_success:
                         progress_tracker.mark_completed(customer_id, sheet_name=sheet_name, row_index=row_idx)
@@ -552,8 +561,8 @@ def main():
                             d2c_no_count += 1
 
                         logger.info(
-                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Appr: %s | Act: %s | ReqID: %s | BrOwner: %s | Doc: %s | Web: %s | UniqEmail: %s | isD2C: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
-                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, approved_brand, actual_brand_count, request_id or "-", brand_owner or "-", document_type or "-", brand_website_link or "-", unique_email, is_d2c_str, total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
+                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Appr: %s | Act: %s | ReqID: %s | BrOwner: %s | Doc: %s | Web: %s | Insta: %s | UniqEmail: %s | isD2C: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
+                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, approved_brand, actual_brand_count, request_id or "-", brand_owner or "-", document_type or "-", brand_website_link or "-", instagram_url or "-", unique_email, is_d2c_str, total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
                         )
                         if total_saved_in_session % 100 == 0:
                             logger.info(

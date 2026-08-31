@@ -150,12 +150,13 @@ class CSVWriter:
                 12: 16, # Brand Owner
                 13: 16, # Document Type
                 14: 32, # Brand Website Link
-                15: 18, # Mobile Number
-                16: 24, # Registered Mobile Number
-                17: 25, # Email ID
-                18: 28, # Registered Email ID
-                19: 14, # Unique Email
-                20: 12, # isD2C
+                15: 35, # Instagram URL
+                16: 18, # Mobile Number
+                17: 24, # Registered Mobile Number
+                18: 25, # Email ID
+                19: 28, # Registered Email ID
+                20: 14, # Unique Email
+                21: 12, # isD2C
             }
             for col_idx, width in col_widths.items():
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
@@ -369,6 +370,7 @@ class CSVWriter:
         brand_owner = data.get("brand_owner", "")
         document_type = data.get("document_type", "")
         brand_website_link = data.get("brand_website_link", "")
+        instagram_url = data.get("instagram_url") or data.get("instagram") or ""
         mobile_number = data.get("mobile_number", "")
         registered_mobile = data.get("registered_mobile_number", "")
         email_id = data.get("email_id", "")
@@ -387,10 +389,11 @@ class CSVWriter:
                             unique_email = "Yes"
                             break
 
-        # Determine isD2C ('Yes' or 'No') based on 3 criteria:
+        # Determine isD2C ('Yes' or 'No') based on 4 criteria:
         # 1. Unique Email == 'Yes'
         # 2. Document Type is BAL or TM
         # 3. Valid Brand Website Link
+        # 4. Instagram Profile Found
         is_d2c = data.get("isD2C") or data.get("is_d2c")
         if not is_d2c:
             doc_type_clean = str(document_type).strip().upper()
@@ -400,7 +403,11 @@ class CSVWriter:
                 and web_link_clean.lower() not in ("null", "none", "n/a", "na", "")
                 and ("." in web_link_clean or "http" in web_link_clean.lower())
             )
-            if unique_email == "Yes" or doc_type_clean in ("BAL", "TM") or is_valid_link:
+            is_insta_found = bool(
+                instagram_url
+                and str(instagram_url).strip().lower() not in ("null", "none", "n/a", "na", "")
+            )
+            if unique_email == "Yes" or doc_type_clean in ("BAL", "TM") or is_valid_link or is_insta_found:
                 is_d2c = "Yes"
             else:
                 is_d2c = "No"
@@ -420,6 +427,7 @@ class CSVWriter:
             brand_owner,
             document_type,
             brand_website_link,
+            instagram_url,
             mobile_number,
             registered_mobile,
             email_id,
