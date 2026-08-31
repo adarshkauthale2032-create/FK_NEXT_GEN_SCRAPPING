@@ -42,6 +42,7 @@ from config.settings import (
 from auth.auth_manager import AuthManager, AuthExpiredError
 from api.api_client import APIClient, APIError
 from scrapers.api1_scraper import API1Scraper
+from scrapers.api2_scraper import API2Scraper
 from scrapers.api3_scraper import API3Scraper
 from excel.excel_writer import CSVWriter, ExcelWriter
 
@@ -445,6 +446,7 @@ def main():
 
     api_client = APIClient(auth_manager)
     api1 = API1Scraper(api_client)
+    api2 = API2Scraper(api_client)
     api3 = API3Scraper(api_client)
     
     csv_writer = CSVWriter(output_dir=OUTPUT_DIR, chunk_size=chunk_size)
@@ -504,28 +506,48 @@ def main():
                     support_mgr = api1_data.get("support_manager", "No")
                     tier = api1_data.get("seller_tier", "")
 
-                    # Step 2: Execute API #3 (Seller Contact Details & D2C Evaluation)
-                    api3_data = api3.get_seller_contacts(customer_id)
-                    is_d2c = api3_data.get("isD2C") or api3_data.get("is_d2c", "No")
-                    is_d2c_yes = str(is_d2c).strip().lower() == "yes"
+                    # Step 2: Execute API #2 (Brand Approval, Actual Brand Count & QnA Questions)
+                    api2_data = api2.get_brand_approval_details(customer_id)
+                    approved_brand = api2_data.get("approved_brand", 0)
+                    actual_brand_count = api2_data.get("actual_brand_count", 0)
+                    request_id = api2_data.get("request_id", "")
+                    brand_owner = api2_data.get("brand_owner", "")
+                    document_type = api2_data.get("document_type", "")
+                    brand_website_link = api2_data.get("brand_website_link", "")
+                    brand_is_d2c = api2_data.get("brand_is_d2c", False)
 
-                    # Combine Results (API #2 skipped, blank values for brand count)
+                    # Step 3: Execute API #3 (Seller Contact Details & Unique Email)
+                    api3_data = api3.get_seller_contacts(customer_id)
+                    unique_email = api3_data.get("unique_email", "No")
+                    is_email_d2c = str(unique_email).strip().lower() == "yes"
+
+                    # Multi-Criteria isD2C Evaluation:
+                    # 1. Unique Email == 'Yes' OR
+                    # 2. Document Type in ('BAL', 'TM') OR
+                    # 3. Brand Website Link is available and valid
+                    is_d2c_yes = bool(is_email_d2c or brand_is_d2c)
+                    is_d2c_str = "Yes" if is_d2c_yes else "No"
+
+                    # Combine Results across all APIs
                     combined_record = {
                         **api1_data,
-                        "approved_brand": "",
-                        "actual_brand_count": "",
+                        **api2_data,
                         **api3_data,
+                        "unique_email": unique_email,
+                        "unique_email_yes_no": unique_email,
+                        "isD2C": is_d2c_str,
+                        "is_d2c": is_d2c_str,
                     }
 
-                    # Step 3: Save ONLY D2C 'Yes' records to CSV
+                    # Step 4: Save ONLY D2C 'Yes' records to CSV/Excel
                     if is_d2c_yes:
                         save_success = csv_writer.append_customer(combined_record, sr_no=current_sr_no)
                         if save_success:
                             progress_tracker.mark_completed(customer_id, sheet_name=sheet_name, row_index=row_idx)
                             d2c_saved_in_session += 1
                             logger.info(
-                                "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Status: %s | Support Mgr: %s | Tier: %s | isD2C: YES -> SAVED TO CSV (D2C Saved: %d/%d | Sr No: %d | File: %s)",
-                                sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, account_status, support_mgr, tier, d2c_saved_in_session, max_d2c_limit, current_sr_no, target_csv.name
+                                "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Appr: %s | Act: %s | ReqID: %s | BrOwner: %s | Doc: %s | Web: %s | UniqEmail: %s | isD2C: YES -> SAVED TO CSV (D2C Saved: %d/%d | Sr No: %d | File: %s)",
+                                sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, approved_brand, actual_brand_count, request_id or "-", brand_owner or "-", document_type or "-", brand_website_link or "-", unique_email, d2c_saved_in_session, max_d2c_limit, current_sr_no, target_csv.name
                             )
                             if d2c_saved_in_session % 100 == 0:
                                 logger.info(
@@ -544,8 +566,8 @@ def main():
                         # Non-D2C: Mark completed in progress tracker, skip CSV persistence
                         progress_tracker.mark_completed(customer_id, sheet_name=sheet_name, row_index=row_idx)
                         logger.info(
-                            "[Sheet: %s | Row: %d] ID: %s | Account: %s | Status: %s | Support Mgr: %s | isD2C: NO -> SKIPPED CSV",
-                            sheet_name, row_idx, customer_id, account_name, account_status, support_mgr
+                            "[Sheet: %s | Row: %d] ID: %s | Account: %s | Appr: %s | Act: %s | ReqID: %s | Doc: %s | UniqEmail: %s | isD2C: NO -> SKIPPED CSV",
+                            sheet_name, row_idx, customer_id, account_name, approved_brand, actual_brand_count, request_id or "-", document_type or "-", unique_email
                         )
 
                     total_evaluated_in_session += 1

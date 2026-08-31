@@ -13,7 +13,7 @@ from config.settings import API3_ENDPOINT, GENERIC_EMAIL_DOMAINS
 logger = logging.getLogger("customer_scraper")
 
 
-def determine_is_d2c(*emails: Optional[str]) -> str:
+def determine_unique_email(*emails: Optional[str]) -> str:
     """
     Checks if any provided email contains a unique/custom domain (not gmail.com or generic email services).
     Returns 'Yes' if a custom/unique domain is found, else 'No'.
@@ -29,6 +29,10 @@ def determine_is_d2c(*emails: Optional[str]) -> str:
             if domain and "." in domain and domain not in GENERIC_EMAIL_DOMAINS and domain not in ("null", "none"):
                 return "Yes"
     return "No"
+
+
+# Backward compatibility alias
+determine_is_d2c = determine_unique_email
 
 
 class API3Scraper:
@@ -67,6 +71,7 @@ class API3Scraper:
                 registered_mobile_number: str
                 email_id: str
                 registered_email_id: str
+                unique_email: str ('Yes' / 'No')
                 isD2C: str ('Yes' / 'No')
         """
         endpoint = API3_ENDPOINT.format(customer_id=customer_id)
@@ -109,10 +114,10 @@ class API3Scraper:
             or self._safe_get(result, "primaryEmail")
         )
 
-        # 5. Determine isD2C based on email domains
-        is_d2c = determine_is_d2c(email_id, registered_email_id)
+        # 5. Determine Unique Email status
+        unique_email = determine_unique_email(email_id, registered_email_id)
 
-        logger.info("API #3 successful for customer ID: %s | isD2C: %s", customer_id, is_d2c)
+        logger.info("API #3 successful for customer ID: %s | Unique Email: %s", customer_id, unique_email)
 
         return {
             "customer_id": str(customer_id).strip(),
@@ -120,6 +125,8 @@ class API3Scraper:
             "registered_mobile_number": registered_mobile_number,
             "email_id": email_id,
             "registered_email_id": registered_email_id,
-            "isD2C": is_d2c,
-            "is_d2c": is_d2c,
+            "unique_email": unique_email,
+            "unique_email_yes_no": unique_email,
+            "isD2C": unique_email,
+            "is_d2c": unique_email,
         }

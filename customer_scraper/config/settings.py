@@ -70,6 +70,7 @@ API2_REQUESTS_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2?seller
 API2_ENDPOINT = API2_REQUESTS_ENDPOINT  # Compatibility alias
 API3_ENDPOINT = "/getSellerContacts?sellerId={customer_id}"
 API_APPROVALS_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2?sellerId={customer_id}"
+API_QUESTIONS_ENDPOINT = "/sellerDashboard/napi/qnaStore/questionsV2?processId={request_id}&sellerId={customer_id}"
 
 # Scraping & Business Rules
 CHUNK_SIZE = 10000  # Number of sellers per output CSV batch file (e.g. 1-10000, 10001-20000, etc.)
@@ -119,10 +120,15 @@ CSV_COLUMNS = [
     "Live Date",
     "Approved Brand",
     "Actual Brand Count",
+    "Request ID",
+    "Brand Owner",
+    "Document Type",
+    "Brand Website Link",
     "Mobile Number",
     "Registered Mobile Number",
     "Email ID",
     "Registered Email ID",
+    "Unique Email",
     "isD2C",
 ]
 EXCEL_COLUMNS = CSV_COLUMNS  # Backward compatibility alias

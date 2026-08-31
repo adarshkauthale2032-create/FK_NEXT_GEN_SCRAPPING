@@ -146,11 +146,16 @@ class CSVWriter:
                 8: 15,  # Live Date
                 9: 16,  # Approved Brand
                 10: 18, # Actual Brand Count
-                11: 18, # Mobile Number
-                12: 24, # Registered Mobile Number
-                13: 25, # Email ID
-                14: 28, # Registered Email ID
-                15: 12, # isD2C
+                11: 18, # Request ID
+                12: 16, # Brand Owner
+                13: 16, # Document Type
+                14: 32, # Brand Website Link
+                15: 18, # Mobile Number
+                16: 24, # Registered Mobile Number
+                17: 25, # Email ID
+                18: 28, # Registered Email ID
+                19: 14, # Unique Email
+                20: 12, # isD2C
             }
             for col_idx, width in col_widths.items():
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
@@ -360,23 +365,45 @@ class CSVWriter:
         live_date = self._clean_date_str(data.get("live_date", ""))
         approved_brand = data.get("approved_brand", "")
         actual_brand_count = data.get("actual_brand_count", "")
+        request_id = data.get("request_id", "")
+        brand_owner = data.get("brand_owner", "")
+        document_type = data.get("document_type", "")
+        brand_website_link = data.get("brand_website_link", "")
         mobile_number = data.get("mobile_number", "")
         registered_mobile = data.get("registered_mobile_number", "")
         email_id = data.get("email_id", "")
         registered_email = data.get("registered_email_id", "")
+        unique_email = data.get("unique_email") or data.get("unique_email_yes_no", "")
 
-        # Determine isD2C ('Yes' or 'No') based on unique email domains
-        is_d2c = data.get("isD2C") or data.get("is_d2c")
-        if not is_d2c:
-            is_d2c = "No"
+        # Determine Unique Email ('Yes' or 'No')
+        if not unique_email:
+            unique_email = "No"
             for em in (email_id, registered_email):
                 if em:
                     em_str = str(em).strip().lower()
                     if "@" in em_str:
                         dom = em_str.split("@")[-1].strip()
                         if dom and "." in dom and dom not in GENERIC_EMAIL_DOMAINS and dom not in ("null", "none"):
-                            is_d2c = "Yes"
+                            unique_email = "Yes"
                             break
+
+        # Determine isD2C ('Yes' or 'No') based on 3 criteria:
+        # 1. Unique Email == 'Yes'
+        # 2. Document Type is BAL or TM
+        # 3. Valid Brand Website Link
+        is_d2c = data.get("isD2C") or data.get("is_d2c")
+        if not is_d2c:
+            doc_type_clean = str(document_type).strip().upper()
+            web_link_clean = str(brand_website_link).strip()
+            is_valid_link = bool(
+                web_link_clean
+                and web_link_clean.lower() not in ("null", "none", "n/a", "na", "")
+                and ("." in web_link_clean or "http" in web_link_clean.lower())
+            )
+            if unique_email == "Yes" or doc_type_clean in ("BAL", "TM") or is_valid_link:
+                is_d2c = "Yes"
+            else:
+                is_d2c = "No"
 
         return [[
             sr_no,
@@ -389,10 +416,15 @@ class CSVWriter:
             live_date,
             approved_brand,
             actual_brand_count,
+            request_id,
+            brand_owner,
+            document_type,
+            brand_website_link,
             mobile_number,
             registered_mobile,
             email_id,
             registered_email,
+            unique_email,
             is_d2c,
         ]]
 
