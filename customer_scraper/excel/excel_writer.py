@@ -88,17 +88,44 @@ class CSVWriter:
         return self.output_dir / f"scraped_data_{start_sr}_to_{end_sr}.csv"
 
     def _ensure_csv_file_exists(self, file_path: Path) -> None:
-        """Creates the target CSV file with formatted UTF-8-SIG headers if missing."""
-        if file_path.exists():
-            return
+        """Creates the target CSV file with formatted UTF-8-SIG headers if missing, or upgrades headers if column count changed."""
         file_path.parent.mkdir(parents=True, exist_ok=True)
+        if not file_path.exists():
+            try:
+                with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(CSV_COLUMNS)
+                logger.debug("Initialized new CSV file at %s", file_path.name)
+            except Exception as e:
+                logger.error("Failed to initialize CSV file (%s): %s", file_path, str(e))
+            return
+
+        # Check if existing CSV has outdated columns (e.g. 20 instead of 21 columns)
         try:
-            with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.writer(f)
-                writer.writerow(CSV_COLUMNS)
-            logger.debug("Initialized new CSV file at %s", file_path.name)
-        except Exception as e:
-            logger.error("Failed to initialize CSV file (%s): %s", file_path, str(e))
+            with open(file_path, "r", newline="", encoding="utf-8-sig") as f:
+                reader = list(csv.reader(f))
+
+            if reader:
+                existing_header = reader[0]
+                if len(existing_header) < len(CSV_COLUMNS) or "Instagram URL" not in existing_header:
+                    logger.info("Migrating %s to 21-column schema (adding 'Instagram URL')...", file_path.name)
+                    migrated_rows = [CSV_COLUMNS]
+                    for row in reader[1:]:
+                        if len(row) == 20:
+                            # Insert empty Instagram URL at index 14
+                            new_row = row[:14] + [""] + row[14:]
+                            migrated_rows.append(new_row)
+                        elif len(row) == len(CSV_COLUMNS):
+                            migrated_rows.append(row)
+                        else:
+                            migrated_rows.append(row)
+
+                    with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
+                        writer = csv.writer(f)
+                        writer.writerows(migrated_rows)
+                    logger.info("Successfully upgraded %s with 21 columns including 'Instagram URL'.", file_path.name)
+        except Exception as mig_err:
+            logger.debug("Schema migration check notice for %s: %s", file_path.name, str(mig_err))
 
     def _ensure_excel_file_exists(self, file_path: Path) -> None:
         """Creates the target Excel workbook with styled headers if missing."""
@@ -457,14 +484,16 @@ class CSVWriter:
 
     def flush_pending(self) -> bool:
         """
-        Writes all buffered pending records to their target CSV and Excel files.
+        Writes all buffered pending records to both target CSV and Excel (.xlsx) files.
         """
         pending = self.load_pending_records()
         if not pending:
             return True
 
-        # Group rows by target CSV batch files based on sr_no
-        batches: Dict[Path, List[List[Any]]] = {}
+        # Group rows by target batch files based on sr_no
+        csv_batches: Dict[Path, List[List[Any]]] = {}
+        excel_batches: Dict[Path, List[List[Any]]] = {}
+
         for item in pending:
             item_sr = item.get("sr_no", 1)
             item_data = item.get("data", {})
@@ -474,17 +503,26 @@ class CSVWriter:
                 sr_int = 1
 
             target_csv = self.get_csv_path_for_sr(sr_int)
+            target_excel = self.get_excel_path_for_sr(sr_int)
 
-            if target_csv not in batches:
-                batches[target_csv] = []
+            if target_csv not in csv_batches:
+                csv_batches[target_csv] = []
+            if target_excel not in excel_batches:
+                excel_batches[target_excel] = []
 
             rows = self._format_customer_rows(item_data, item_sr)
-            batches[target_csv].extend(rows)
+            csv_batches[target_csv].extend(rows)
+            excel_batches[target_excel].extend(rows)
 
         all_saved = True
-        for target_csv, rows in batches.items():
+        for target_csv, rows in csv_batches.items():
             csv_ok = self._append_rows_to_csv_with_retry(target_csv, rows)
             if not csv_ok:
+                all_saved = False
+
+        for target_excel, rows in excel_batches.items():
+            excel_ok = self._append_rows_to_excel_with_retry(target_excel, rows)
+            if not excel_ok:
                 all_saved = False
 
         if all_saved:
