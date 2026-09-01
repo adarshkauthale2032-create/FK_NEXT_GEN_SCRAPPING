@@ -94,9 +94,9 @@ class AuthManager:
                         self.headers.update(file_headers)
                         self.session.headers.update(file_headers)
 
-                    # Ensure FK-CSRF-TOKEN header is set if present in cookies
-                    if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies and "FK-CSRF-TOKEN" not in self.headers:
-                        csrf_val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
+                    # Ensure FK-CSRF-TOKEN header is set if present in cookies or headers
+                    csrf_val = self.get_csrf_token()
+                    if csrf_val:
                         self.headers["FK-CSRF-TOKEN"] = csrf_val
                         self.headers["fk-csrf-token"] = csrf_val
                         self.session.headers["FK-CSRF-TOKEN"] = csrf_val
@@ -117,6 +117,33 @@ class AuthManager:
 
         return loaded
 
+    def get_csrf_token(self) -> Optional[str]:
+        """
+        Finds and returns the active CSRF token from headers or cookies.
+        Checks:
+        1. Header 'FK-CSRF-TOKEN' or 'fk-csrf-token'
+        2. Cookie 'XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h'
+        3. Case-insensitive cookie search for xyz7... or csrf
+        """
+        # 1. Check in headers
+        for k, v in self.headers.items():
+            if k.lower() == "fk-csrf-token" and v and str(v).strip():
+                return str(v).strip()
+
+        # 2. Check direct cookie key
+        if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies:
+            val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
+            if val and str(val).strip():
+                return str(val).strip()
+
+        # 3. Check case-insensitive cookie search
+        for k, v in self.cookies.items():
+            k_lower = k.lower()
+            if (k_lower == "xyz7pq9rs2t1uv8wa3bc6de4fg0h" or "csrf" in k_lower) and v and str(v).strip():
+                return str(v).strip()
+
+        return None
+
     def get_cookie_header_string(self) -> str:
         """
         Returns all active cookies formatted as a single 'Cookie' header string.
@@ -134,65 +161,57 @@ class AuthManager:
 
     def refresh_session(self, seller_id: Optional[str] = None, target_api: str = "all") -> bool:
         """
-        Refreshes session when expired using the fixed standard seller ID (218598a2b41c4bcd).
+        Refreshes session automatically when expired using Chrome DevTools Protocol (CDP).
         Saves the new session to session.json with forced overwrite and updates memory state.
+        Operates fully autonomously without prompting for manual terminal input.
         """
         target_seller = str(seller_id).strip() if seller_id else DEFAULT_SELLER_ID
-        logger.info("[AUTH] Session refresh requested for seller ID %s (Target API: %s)...", target_seller, target_api.upper())
+        logger.info("[AUTH] Automatic session refresh initiated for seller ID %s (Target: %s)...", target_seller, target_api.upper())
 
-        try:
-            session_data = self.playwright_handler.refresh_and_extract_session(seller_id=target_seller, target_api=target_api)
-            if session_data and session_data.get("cookies"):
-                new_cookies = session_data.get("cookies", {})
-                new_headers = session_data.get("headers", {})
-
-                # 1. Update in-memory state
-                self.cookies.update(new_cookies)
-                self.headers.update(new_headers)
-
-                # 2. Fresh requests.Session instance
-                self.session = requests.Session()
-                self.session.cookies.update(new_cookies)
-                self.session.headers.update(new_headers)
-
-                # 3. Ensure CSRF token header
-                if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies:
-                    csrf_val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
-                    self.headers["FK-CSRF-TOKEN"] = csrf_val
-                    self.headers["fk-csrf-token"] = csrf_val
-                    self.session.headers["FK-CSRF-TOKEN"] = csrf_val
-                    self.session.headers["fk-csrf-token"] = csrf_val
-
-                # 4. Save and force overwrite session.json on disk
-                self._save_to_file()
-
-                logger.info(
-                    "[AUTH] Session successfully refreshed and persisted (%d cookies, %d headers). Ready for scraping.",
-                    len(self.cookies),
-                    len(self.headers),
-                )
-                return True
-        except Exception as e:
-            logger.error("[AUTH] CDP session refresh failed: %s", str(e))
-
-        # Fallback: interactive manual entry if terminal available
-        if sys.stdin.isatty():
-            print("\n" + "=" * 65)
-            print("  AUTHENTICATION FALLBACK:")
-            print("  Paste updated 'Cookie' header string below (or Press Enter to abort):")
-            print("=" * 65)
+        max_refresh_attempts = 3
+        for attempt in range(1, max_refresh_attempts + 1):
             try:
-                user_input = input("Cookie Header: ").strip()
-                if user_input:
-                    self.set_cookie_string(user_input)
+                session_data = self.playwright_handler.refresh_and_extract_session(seller_id=target_seller, target_api=target_api)
+                if session_data and session_data.get("cookies"):
+                    new_cookies = session_data.get("cookies", {})
+                    new_headers = session_data.get("headers", {})
+
+                    # 1. Update in-memory state
+                    self.cookies.update(new_cookies)
+                    self.headers.update(new_headers)
+
+                    # 2. Fresh requests.Session instance
+                    self.session = requests.Session()
+                    self.session.cookies.update(new_cookies)
+                    self.session.headers.update(new_headers)
+
+                    # 3. Ensure CSRF token header
+                    if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies:
+                        csrf_val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
+                        self.headers["FK-CSRF-TOKEN"] = csrf_val
+                        self.headers["fk-csrf-token"] = csrf_val
+                        self.session.headers["FK-CSRF-TOKEN"] = csrf_val
+                        self.session.headers["fk-csrf-token"] = csrf_val
+
+                    # 4. Save and force overwrite session.json on disk
                     self._save_to_file()
-                    logger.info("Session updated from manual cookie input.")
+
+                    logger.info(
+                        "[AUTH] Session successfully refreshed and persisted (%d cookies, %d headers). Automatically continuing scraping.",
+                        len(self.cookies),
+                        len(self.headers),
+                    )
                     return True
-            except (EOFError, KeyboardInterrupt):
-                raise AuthExpiredError("User aborted session authentication prompt.")
+                else:
+                    logger.warning("[AUTH] Attempt %d/%d: Session extraction returned empty cookies. Retrying in 2s...", attempt, max_refresh_attempts)
+            except Exception as e:
+                logger.error("[AUTH] Attempt %d/%d: CDP session refresh error: %s", attempt, max_refresh_attempts, str(e))
+
+            if attempt < max_refresh_attempts:
+                time.sleep(2)
 
         raise AuthExpiredError(
-            f"Script failed because session failed to get from Chrome (website may be logged out). Please open Chrome, log into Flipkart Seller Portal, and update {self.session_path.name} or rerun python main.py."
+            f"Automated session refresh failed after {max_refresh_attempts} attempts. Please ensure Chrome is running with debugging port on {self.playwright_handler.cdp_url}."
         )
 
     def _save_to_file(self) -> None:

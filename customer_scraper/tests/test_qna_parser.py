@@ -18,6 +18,8 @@ from config.settings import CSV_COLUMNS
 class TestQnAParser(unittest.TestCase):
     def setUp(self):
         self.mock_client = MagicMock(spec=APIClient)
+        self.mock_client.auth_manager = MagicMock()
+        self.mock_client.auth_manager.get_csrf_token.return_value = "mock_csrf_token"
         self.scraper = API2Scraper(self.mock_client)
 
     def test_parse_real_response_file(self):

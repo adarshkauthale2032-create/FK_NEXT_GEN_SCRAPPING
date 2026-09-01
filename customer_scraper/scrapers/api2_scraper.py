@@ -184,6 +184,11 @@ class API2Scraper:
             "Sec-Fetch-Site": "same-origin",
         }
 
+        csrf_token = self.api_client.auth_manager.get_csrf_token()
+        if csrf_token:
+            headers["FK-CSRF-TOKEN"] = csrf_token
+            headers["fk-csrf-token"] = csrf_token
+
         page_size = max(approved_count, 1000)
         all_records: List[Dict[str, Any]] = []
         page = 1

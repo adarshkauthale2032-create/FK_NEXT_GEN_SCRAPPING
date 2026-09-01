@@ -256,38 +256,70 @@ class PlaywrightSessionHandler:
                 logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening: %s", target_info_url)
                 try:
                     tab_info = await context.new_page()
-                    await tab_info.goto(target_info_url, timeout=12000, wait_until="domcontentloaded")
+                    await tab_info.goto(target_info_url, timeout=15000, wait_until="domcontentloaded")
                 except Exception as ex1:
                     logger.debug("[SESSION] Tab 1 open notice: %s", str(ex1))
             else:
-                logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Triggering reload...", tab_info.url)
+                logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Navigating / reloading...", tab_info.url)
                 try:
-                    await tab_info.evaluate("() => { try { window.location.reload(); } catch(e){} }")
-                except Exception as ex1:
-                    logger.debug("[SESSION] Tab 1 reload notice: %s", str(ex1))
+                    await tab_info.goto(target_info_url, timeout=15000, wait_until="domcontentloaded")
+                except Exception:
+                    try:
+                        await tab_info.reload(timeout=15000, wait_until="domcontentloaded")
+                    except Exception as ex1:
+                        logger.debug("[SESSION] Tab 1 reload notice: %s", str(ex1))
 
-            await asyncio.sleep(0.5)
+            # Wait 2 seconds for background SPA API calls and cookie setting to complete
+            await asyncio.sleep(2.0)
 
             # ------------------------------------------------------------
             # Step 2: Extract All Live Cookies for fkcloud.it domain
             # ------------------------------------------------------------
-            browser_cookies = await context.cookies([
-                "https://suv-flipkart.seller-support.fkcloud.it",
-                "https://fkcloud.it",
-                "https://seller.flipkart.com",
-            ])
+            try:
+                browser_cookies = await context.cookies([
+                    "https://suv-flipkart.seller-support.fkcloud.it",
+                    "https://fkcloud.it",
+                    "https://seller.flipkart.com",
+                ])
 
-            for c in browser_cookies:
-                c_name = c.get("name")
-                c_val = c.get("value")
-                if c_name and c_val is not None:
-                    captured_cookies[c_name] = c_val
+                for c in browser_cookies:
+                    c_name = c.get("name")
+                    c_val = c.get("value")
+                    if c_name and c_val is not None:
+                        captured_cookies[c_name] = c_val
+            except Exception as ex_ck:
+                logger.debug("[SESSION] Context cookies error: %s", str(ex_ck))
 
-            # If CSRF token is in cookies (XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h), ensure header is updated
+            # Also extract document.cookie directly from active page DOM
+            if tab_info:
+                try:
+                    dom_cookies = await tab_info.evaluate("() => document.cookie")
+                    if dom_cookies:
+                        for item in dom_cookies.split(";"):
+                            if "=" in item:
+                                ck, cv = item.strip().split("=", 1)
+                                if ck.strip() and cv.strip():
+                                    captured_cookies[ck.strip()] = cv.strip()
+                except Exception as ex_dom:
+                    logger.debug("[SESSION] DOM cookies error: %s", str(ex_dom))
+
+            # Resolve CSRF token from cookies or headers (ensuring both are populated)
+            csrf_token_val = None
             if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in captured_cookies:
-                csrf_val = captured_cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
-                captured_headers["FK-CSRF-TOKEN"] = csrf_val
-                captured_headers["fk-csrf-token"] = csrf_val
+                csrf_token_val = captured_cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
+            else:
+                for ck, cv in captured_cookies.items():
+                    if ck.lower() == "xyz7pq9rs2t1uv8wa3bc6de4fg0h" or "csrf" in ck.lower():
+                        csrf_token_val = cv
+                        break
+
+            if not csrf_token_val:
+                csrf_token_val = captured_headers.get("FK-CSRF-TOKEN") or captured_headers.get("fk-csrf-token")
+
+            if csrf_token_val:
+                captured_headers["FK-CSRF-TOKEN"] = csrf_token_val
+                captured_headers["fk-csrf-token"] = csrf_token_val
+                captured_cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"] = csrf_token_val
 
             # Read user-agent from page evaluation if not intercepted
             active_tab = tab_info

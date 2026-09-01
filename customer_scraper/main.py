@@ -585,32 +585,37 @@ def main():
                 except AuthExpiredError as auth_err:
                     consecutive_auth_failures += 1
                     logger.warning(
-                        "[AUTH EXPIRY] Session expired while processing %s (Attempt %d/%d). Refreshing session and resuming...",
+                        "[AUTH EXPIRY] Session expired while processing %s (Attempt %d/%d). Automatically refreshing session via CDP and resuming...",
                         customer_id, seller_attempt, max_seller_retries
                     )
                     try:
-                        auth_manager.refresh_session(seller_id=DEFAULT_SELLER_ID)
+                        refresh_ok = auth_manager.refresh_session(seller_id=DEFAULT_SELLER_ID)
+                        if refresh_ok:
+                            logger.info("[AUTH RECOVERED] Successfully re-authenticated via CDP! Automatically continuing scraping without interruption...")
+                            consecutive_auth_failures = 0
+                            time.sleep(0.5)
+                            continue  # Automatically retry this seller attempt immediately
                     except Exception as refresh_err:
                         logger.error("Automatic session refresh failed: %s", str(refresh_err))
 
-                    # If multiple consecutive auth failures occur (e.g. user completely logged out in Chrome)
+                    # If multiple consecutive auth failures occur (e.g. temporary network / Chrome CDP latency)
                     if seller_attempt >= max_seller_retries:
                         if consecutive_auth_failures >= 5:
-                            logger.critical("[CRITICAL] Multiple consecutive authentication failures. Pausing for user login.")
-                            print("\n" + "=" * 75)
-                            print("⚠️ [SCRAPING PAUSED] Please ensure you are logged into Flipkart in Chrome.")
-                            print("   Press Enter to resume scraping after verifying login:")
-                            print("=" * 75 + "\n")
+                            logger.warning(
+                                "[AUTH RETRY LOOP] Multiple consecutive auth failures (%d). Backing off 10s for automated recovery...",
+                                consecutive_auth_failures
+                            )
+                            time.sleep(10)
                             try:
-                                input("Press Enter to resume...")
-                                consecutive_auth_failures = 0
-                                auth_manager.refresh_session(seller_id=DEFAULT_SELLER_ID)
-                            except (EOFError, KeyboardInterrupt):
-                                break
-                        else:
-                            failed_count += 1
-                            logger.warning("Skipping customer %s after %d failed auth attempts. Continuing to next seller...", customer_id, max_seller_retries)
-                            break
+                                if auth_manager.refresh_session(seller_id=DEFAULT_SELLER_ID):
+                                    consecutive_auth_failures = 0
+                                    logger.info("[AUTH RECOVERED] Auto-refresh succeeded after backoff. Resuming pipeline.")
+                            except Exception as re_err:
+                                logger.error("Automated refresh retry error: %s", str(re_err))
+
+                        failed_count += 1
+                        logger.warning("Skipping customer %s after %d failed auth attempts. Continuing to next seller...", customer_id, max_seller_retries)
+                        break
 
                 except APIError as api_err:
                     failed_count += 1
