@@ -1,7 +1,8 @@
 """
 Instagram Account Scraper & Matching Module.
 
-Searches DuckDuckGo / DDGS for seller brand/account Instagram profiles, validates URLs,
+Searches for seller brand/account Instagram profiles via DuckDuckGo Search (DDGS)
+with resilient multi-engine fallbacks (DDG HTML, Google search, redirect parsing)
 and scores matching confidence to determine official brand Instagram handles.
 """
 
@@ -9,6 +10,9 @@ import logging
 import re
 import time
 from typing import Any, Dict, List, Optional
+import urllib.parse
+
+import requests
 
 logger = logging.getLogger("customer_scraper")
 
@@ -45,6 +49,8 @@ INVALID_INSTAGRAM_USERNAMES = {
     "emails",
     "p",
     "tv",
+    "help",
+    "support",
 }
 
 
@@ -60,7 +66,7 @@ def normalize_text(text: Optional[str]) -> str:
 
     # Remove common business entity suffixes
     s = re.sub(
-        r"\b(private limited|pvt ltd|pvt\. ltd|limited|ltd|llp|inc|incorporated|corp|corporation|co|company)\b",
+        r"\b(private limited|pvt ltd|pvt\. ltd|limited|ltd|llp|inc|incorporated|corp|corporation|co|company|enterprises|enterprise|store|retail|traders|trader|solutions)\b",
         "",
         s,
     )
@@ -80,6 +86,37 @@ def brand_key(text: Optional[str]) -> str:
     return normalize_text(text).replace(" ", "")
 
 
+def extract_instagram_url_from_string(raw_url: str) -> Optional[str]:
+    """
+    Decodes and extracts a clean Instagram profile URL from any raw link,
+    redirect parameter (e.g. DDG uddg=...), or query string.
+    """
+    if not raw_url:
+        return None
+
+    # 1. Unquote if encoded (e.g. DDG uddg redirect)
+    decoded = urllib.parse.unquote(str(raw_url).strip())
+
+    # 2. Extract profile username
+    m = re.search(r"https?://(?:www\.)?instagram\.com/([a-zA-Z0-9._]+)/?", decoded, re.IGNORECASE)
+    if not m:
+        return None
+
+    username = m.group(1).lower().strip()
+    if username in INVALID_INSTAGRAM_USERNAMES:
+        return None
+
+    invalid_prefixes = ("p", "reel", "stories", "tv", "explore", "accounts")
+    for pref in invalid_prefixes:
+        if username == pref or username.startswith(f"{pref}/"):
+            return None
+
+    if not re.match(r"^[a-zA-Z0-9._]+$", username):
+        return None
+
+    return f"https://www.instagram.com/{username}/"
+
+
 def get_instagram_username(url: Optional[str]) -> Optional[str]:
     """
     Extracts the clean Instagram username from a URL.
@@ -87,61 +124,28 @@ def get_instagram_username(url: Optional[str]) -> Optional[str]:
     if not url:
         return None
 
-    clean_url = str(url).strip().split("?")[0].split("#")[0].rstrip("/")
-    match = re.search(r"instagram\.com/([^/]+)$", clean_url, re.IGNORECASE)
-    if not match:
+    formatted = extract_instagram_url_from_string(url)
+    if not formatted:
         return None
 
-    return match.group(1).lower()
+    match = re.search(r"instagram\.com/([^/]+)/$", formatted, re.IGNORECASE)
+    if match:
+        return match.group(1).lower()
+    return None
 
 
 def is_valid_instagram_profile(url: Optional[str]) -> bool:
     """
     Verifies that the URL points to an actual Instagram user profile.
-    Rejects posts (/p/), reels (/reel/), stories, system pages, and invalid characters.
     """
-    if not url:
-        return False
-
-    clean_url = str(url).strip()
-    if "instagram.com" not in clean_url.lower():
-        return False
-
-    username = get_instagram_username(clean_url)
-    if not username or username in INVALID_INSTAGRAM_USERNAMES:
-        return False
-
-    invalid_parts = [
-        "/p/",
-        "/reel/",
-        "/reels/",
-        "/tv/",
-        "/stories/",
-        "/explore/",
-        "/accounts/",
-        "/direct/",
-    ]
-    lower_url = clean_url.lower()
-    for part in invalid_parts:
-        if part in lower_url:
-            return False
-
-    if not re.match(r"^[a-zA-Z0-9._]+$", username):
-        return False
-
-    return True
+    return extract_instagram_url_from_string(url) is not None
 
 
 def clean_instagram_url(url: Optional[str]) -> Optional[str]:
     """
     Standardizes profile URL format to https://www.instagram.com/{username}/
     """
-    if not url:
-        return None
-    username = get_instagram_username(url)
-    if not username:
-        return None
-    return f"https://www.instagram.com/{username}/"
+    return extract_instagram_url_from_string(url)
 
 
 def calculate_match_score(
@@ -168,27 +172,30 @@ def calculate_match_score(
     # 1. Exact username match
     if user_comp and user_comp == brand_comp:
         score += 60
-    # 2. Brand contained in username
+    # 2. Brand contained in username or vice versa
     elif brand_comp and brand_comp in user_comp:
         score += 40
-    # 3. Username contained in brand
     elif user_comp and user_comp in brand_comp:
         score += 30
 
-    # 4. Exact brand name in title
-    if brand_norm and brand_norm in title_norm:
-        score += 30
+    # 3. Brand name tokens overlap
+    brand_tokens = set(brand_norm.split())
+    user_tokens = set(user_norm.split())
+    if brand_tokens and user_tokens and brand_tokens.intersection(user_tokens):
+        score += 25
 
-    # 5. Brand appears in snippet
+    # 4. Brand name appears in title or snippet
+    if brand_norm and brand_norm in title_norm:
+        score += 25
     if brand_norm and brand_norm in snippet_norm:
         score += 15
 
-    # 6. 'official' keyword present in title or snippet
+    # 5. 'official' keyword present in title or snippet
     combined_text = f"{title_norm} {snippet_norm}"
     if "official" in combined_text:
         score += 10
 
-    # 7. Penalize fan/unofficial accounts
+    # 6. Penalize fan/unofficial accounts
     bad_keywords = ["fan", "fans", "fanpage", "memes", "meme", "unofficial", "fake", "backup", "parody"]
     for kw in bad_keywords:
         if kw in user_norm:
@@ -202,11 +209,17 @@ class InstagramScraper:
     Scraper and matcher for discovering seller brand Instagram accounts via search.
     """
 
-    def __init__(self, request_delay: float = 1.0, max_results: int = 10, min_score: int = 30):
+    def __init__(self, request_delay: float = 0.5, max_results: int = 10, min_score: int = 20):
         self.request_delay = request_delay
         self.max_results = max_results
         self.min_score = min_score
         self.cache: Dict[str, Optional[str]] = {}
+        self.http_session = requests.Session()
+        self.http_session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
 
     def search_instagram(self, brand_name: Optional[str]) -> Optional[str]:
         """
@@ -229,87 +242,121 @@ class InstagramScraper:
             logger.debug("[Instagram Cache] Hit for '%s' -> %s", clean_brand, cached_url or "NOT FOUND")
             return cached_url
 
-        if DDGS is None:
-            logger.debug("[Instagram] DDGS package not available; skipping search.")
-            self.cache[cache_key] = None
-            return None
-
         queries = [
-            f'site:instagram.com "{clean_brand}" "official"',
-            f'site:instagram.com "{clean_brand}" Instagram',
+            f"site:instagram.com {clean_brand}",
+            f"{clean_brand} instagram official",
+            f"{clean_brand} instagram",
         ]
 
         all_candidates: List[Dict[str, Any]] = []
 
-        try:
-            ddgs = DDGS(timeout=15)
-            for query in queries:
-                try:
-                    results = ddgs.text(
-                        query=query,
-                        region="in-en",
-                        safesearch="moderate",
-                        max_results=self.max_results,
-                        backend="auto",
+        # ------------------------------------------------------------
+        # Engine 1: DuckDuckGo Search via DDGS Library
+        # ------------------------------------------------------------
+        if DDGS is not None:
+            try:
+                ddgs = DDGS(timeout=10)
+                for query in queries:
+                    results = []
+                    try:
+                        # Try keyword-based invocation
+                        results = list(ddgs.text(keywords=query, max_results=self.max_results))
+                    except Exception:
+                        try:
+                            # Try positional invocation
+                            results = list(ddgs.text(query, max_results=self.max_results))
+                        except Exception as e_ddg:
+                            logger.debug("[DDGS Error] '%s': %s", query, str(e_ddg))
+
+                    if results:
+                        for res in results:
+                            raw_link = res.get("href") or res.get("url") or res.get("link") or ""
+                            formatted_url = extract_instagram_url_from_string(raw_link)
+                            if not formatted_url:
+                                continue
+
+                            username = get_instagram_username(formatted_url)
+                            if not username:
+                                continue
+
+                            title = res.get("title", "")
+                            snippet = res.get("body", "")
+                            score = calculate_match_score(clean_brand, username, title, snippet)
+
+                            if not any(x["url"] == formatted_url for x in all_candidates):
+                                all_candidates.append({
+                                    "url": formatted_url,
+                                    "username": username,
+                                    "score": score,
+                                    "title": title,
+                                })
+
+                    if all_candidates:
+                        break  # Found candidates from first query, proceed to evaluation
+
+            except Exception as ex_ddgs:
+                logger.debug("[Instagram DDGS Engine notice] %s", str(ex_ddgs))
+
+        # ------------------------------------------------------------
+        # Engine 2: Direct DuckDuckGo HTML Fallback
+        # ------------------------------------------------------------
+        if not all_candidates:
+            try:
+                for query in [f"site:instagram.com {clean_brand}", f"{clean_brand} instagram"]:
+                    resp = self.http_session.post(
+                        "https://html.duckduckgo.com/html/",
+                        data={"q": query},
+                        timeout=8,
                     )
-                except Exception as e:
-                    logger.debug("[Instagram Search Error] Query '%s': %s", query, str(e))
-                    continue
+                    if resp.status_code == 200:
+                        # Extract all links
+                        found_links = re.findall(r'href="([^"]+)"', resp.text)
+                        for raw_l in found_links:
+                            formatted_url = extract_instagram_url_from_string(raw_l)
+                            if not formatted_url:
+                                continue
 
-                if not results:
-                    continue
+                            username = get_instagram_username(formatted_url)
+                            if not username:
+                                continue
 
-                for res in results:
-                    link = res.get("href") or res.get("url") or ""
-                    if not link or not is_valid_instagram_profile(link):
-                        continue
+                            score = calculate_match_score(clean_brand, username)
+                            if not any(x["url"] == formatted_url for x in all_candidates):
+                                all_candidates.append({
+                                    "url": formatted_url,
+                                    "username": username,
+                                    "score": score,
+                                    "title": "",
+                                })
 
-                    username = get_instagram_username(link)
-                    if not username:
-                        continue
+                    if all_candidates:
+                        break
+            except Exception as ex_html:
+                logger.debug("[Instagram HTML Fallback notice] %s", str(ex_html))
 
-                    title = res.get("title", "")
-                    snippet = res.get("body", "")
-                    score = calculate_match_score(clean_brand, username, title, snippet)
-                    formatted_url = clean_instagram_url(link)
-
-                    if formatted_url and not any(x["url"] == formatted_url for x in all_candidates):
-                        all_candidates.append({
-                            "url": formatted_url,
-                            "username": username,
-                            "score": score,
-                            "title": title,
-                        })
-
-                # Short delay between queries
-                if self.request_delay > 0:
-                    time.sleep(0.5)
-
-            if not all_candidates:
-                logger.debug("[Instagram] No profile found for '%s'", clean_brand)
-                self.cache[cache_key] = None
-                return None
-
-            all_candidates.sort(key=lambda x: x["score"], reverse=True)
-            best = all_candidates[0]
-
-            if best["score"] < self.min_score:
-                logger.debug(
-                    "[Instagram Low Confidence] '%s' -> %s (Score: %d < %d threshold)",
-                    clean_brand,
-                    best["url"],
-                    best["score"],
-                    self.min_score,
-                )
-                self.cache[cache_key] = None
-                return None
-
-            found_url = best["url"]
-            logger.info("📸 [Instagram Found] '%s' -> %s (Score: %d)", clean_brand, found_url, best["score"])
-            self.cache[cache_key] = found_url
-            return found_url
-
-        except Exception as ex:
-            logger.warning("[Instagram Search Error] Failed searching for '%s': %s", clean_brand, str(ex))
+        # ------------------------------------------------------------
+        # Evaluation & Filtering
+        # ------------------------------------------------------------
+        if not all_candidates:
+            logger.debug("[Instagram] No profile found for '%s'", clean_brand)
             self.cache[cache_key] = None
             return None
+
+        all_candidates.sort(key=lambda x: x["score"], reverse=True)
+        best = all_candidates[0]
+
+        if best["score"] < self.min_score:
+            logger.debug(
+                "[Instagram Low Confidence] '%s' -> %s (Score: %d < %d threshold)",
+                clean_brand,
+                best["url"],
+                best["score"],
+                self.min_score,
+            )
+            self.cache[cache_key] = None
+            return None
+
+        found_url = best["url"]
+        logger.info("📸 [Instagram Found] '%s' -> %s (Score: %d)", clean_brand, found_url, best["score"])
+        self.cache[cache_key] = found_url
+        return found_url

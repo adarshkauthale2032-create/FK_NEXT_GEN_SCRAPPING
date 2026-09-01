@@ -527,7 +527,11 @@ def main():
 
                     # Step 4: Search Instagram for Account Name and Approved Brand Name
                     instagram_url = ""
-                    if account_name:
+                    if brand_website_link and "instagram.com" in str(brand_website_link).lower():
+                        from scrapers.instagram_scraper import extract_instagram_url_from_string
+                        instagram_url = extract_instagram_url_from_string(brand_website_link) or ""
+
+                    if not instagram_url and account_name:
                         instagram_url = insta_scraper.search_instagram(account_name) or ""
 
                     # Fallback to unique approved brand names if account name search yielded no Instagram profile
