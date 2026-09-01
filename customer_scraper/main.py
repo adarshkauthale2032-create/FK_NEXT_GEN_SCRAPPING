@@ -525,9 +525,19 @@ def main():
                     unique_email = api3_data.get("unique_email", "No")
                     is_email_d2c = str(unique_email).strip().lower() == "yes"
 
-                    # Step 4: Search Instagram for Account Name / Brand Name
-                    search_target = account_name or (api2_data.get("unique_brands", [""])[0] if api2_data.get("unique_brands") else "")
-                    instagram_url = insta_scraper.search_instagram(search_target) or ""
+                    # Step 4: Search Instagram for Account Name and Approved Brand Name
+                    instagram_url = ""
+                    if account_name:
+                        instagram_url = insta_scraper.search_instagram(account_name) or ""
+
+                    # Fallback to unique approved brand names if account name search yielded no Instagram profile
+                    if not instagram_url and api2_data.get("unique_brands"):
+                        for brand_item in api2_data["unique_brands"]:
+                            if brand_item and str(brand_item).strip().lower() not in (str(account_name).strip().lower(), ""):
+                                instagram_url = insta_scraper.search_instagram(brand_item) or ""
+                                if instagram_url:
+                                    break
+
                     is_insta_d2c = bool(instagram_url and str(instagram_url).strip().lower() not in ("null", "none", "", "n/a", "na"))
 
                     # Multi-Criteria isD2C Evaluation:
