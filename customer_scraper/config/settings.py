@@ -77,8 +77,8 @@ CHUNK_SIZE = 10000  # Number of sellers per output CSV batch file (e.g. 1-10000,
 DEFAULT_SCRAPE_LIMIT = 10000  # Default number of sellers to scrape in this run
 
 # HTTP & Retry Settings
-CONNECT_TIMEOUT = 10  # seconds to establish TCP connection
-READ_TIMEOUT = 25  # seconds to wait for server response
+CONNECT_TIMEOUT = 8  # seconds to establish TCP connection
+READ_TIMEOUT = 15  # seconds to wait for server response
 REQUEST_TIMEOUT = (CONNECT_TIMEOUT, READ_TIMEOUT)  # (connect, read) tuple
 MAX_REQUEST_RETRIES = 3  # retry attempts for transient network/API errors
 BACKOFF_FACTOR = 2  # exponential backoff multiplier in seconds

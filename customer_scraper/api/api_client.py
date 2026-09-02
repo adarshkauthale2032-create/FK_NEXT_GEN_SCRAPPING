@@ -105,17 +105,16 @@ class APIClient:
 
                     # Check for session expiration
                     if self.auth_manager.is_session_expired(response):
-                        logger.warning("Session expired or invalid detected on endpoint %s (Status: %s)", full_url, response.status_code)
+                        logger.warning("⚠️ [AUTH EXPIRED] Session expired on endpoint %s (Status: %s)", full_url, response.status_code)
                         print("\n" + "=" * 75)
-                        print(f"⚠️ [API AUTH ERROR] {method.upper()} {full_url}")
-                        print(f"  Status Code:      {response.status_code}")
-                        if json_data is not None:
-                            print(f"  Request Payload:  {json.dumps(json_data)}")
-                        if params:
-                            print(f"  Request Params:   {json.dumps(params)}")
-                        print(f"  CSRF Token Used:  {req_headers.get('FK-CSRF-TOKEN') or req_headers.get('fk-csrf-token') or 'NONE'}")
-                        print(f"  Response Body:    {response.text[:1500] if response.text else '<EMPTY>'}")
+                        print(f"⚠️ [API AUTH EXPIRED] {method.upper()} {full_url}")
+                        print(f"  Status Code: {response.status_code}")
+                        if response.text:
+                            print(f"  Response:    {response.text[:250]}")
+                        print("  Action:      Clearing expired session & extracting fresh session from Chrome...")
                         print("=" * 75 + "\n")
+                        # Clear expired session immediately so stale cookies are discarded
+                        self.auth_manager.clear_session()
                         break  # Break inner loop to trigger auth refresh
 
                     # Check HTTP status
@@ -177,7 +176,7 @@ class APIClient:
                     sleep_time = BACKOFF_FACTOR ** retry_count
                     if retry_count < MAX_REQUEST_RETRIES:
                         logger.warning(
-                            "Network connection issue (%s) reaching %s. Retrying (%d/%d) in %ds...",
+                            "Network issue (%s) reaching %s. Retrying (%d/%d) in %ds...",
                             type(net_err).__name__,
                             full_url,
                             retry_count,
@@ -202,7 +201,6 @@ class APIClient:
             # If inner loop broke due to session expiry
             auth_attempts += 1
             if auth_attempts <= MAX_AUTH_RETRIES:
-                # Extract sellerId if available in params or url
                 seller_id = None
                 if params and isinstance(params, dict) and "sellerId" in params:
                     seller_id = params["sellerId"]
@@ -213,7 +211,6 @@ class APIClient:
                     if "sellerId" in query_params:
                         seller_id = query_params["sellerId"][0]
 
-                # Identify which API failed so we only refresh that specific page
                 target_api = "all"
                 if any(x in full_url for x in ("approval-store", "requestsV2", "sellerDashboard")):
                     target_api = "api2"
@@ -223,19 +220,21 @@ class APIClient:
                     target_api = "api3"
 
                 refresh_target_seller = DEFAULT_SELLER_ID
-                logger.info("Triggering auth refresh using seller %s (Target: %s, Auth attempt %d/%d)...", refresh_target_seller, target_api.upper(), auth_attempts, MAX_AUTH_RETRIES)
+                logger.info("🔄 Triggering session refresh from Chrome (Seller: %s, Target: %s, Auth attempt %d/%d)...", refresh_target_seller, target_api.upper(), auth_attempts, MAX_AUTH_RETRIES)
                 try:
                     refreshed = self.auth_manager.refresh_session(seller_id=refresh_target_seller, target_api=target_api)
-                    if not refreshed:
-                        raise AuthExpiredError(f"Unable to refresh session for {target_api}.")
-                    logger.info("[AUTH] Session refreshed successfully. Resuming API call with updated session.")
+                    if not refreshed or not self.auth_manager.cookies:
+                        raise AuthExpiredError(f"Unable to extract fresh session cookies from Chrome for {target_api}.")
+                    logger.info("✅ [AUTH RECOVERED] Fresh session captured! Re-executing API call: %s %s", method.upper(), full_url)
+                    continue  # Re-run request with fresh session!
                 except Exception as auth_err:
                     logger.error("Auth refresh failed: %s", str(auth_err))
-                    raise AuthExpiredError(f"Authentication failed: {str(auth_err)}")
+                    if auth_attempts >= MAX_AUTH_RETRIES:
+                        raise AuthExpiredError(f"Authentication failed: {str(auth_err)}")
             else:
                 logger.error("Exceeded maximum auth retry attempts (%d).", MAX_AUTH_RETRIES)
                 raise AuthExpiredError(
-                    f"Script failed because session failed to get after {MAX_AUTH_RETRIES} attempts (website may be logged out in Chrome). Please open Chrome, log into Flipkart Seller Portal, and rerun python main.py."
+                    f"Session failed after {MAX_AUTH_RETRIES} attempts. Please open Chrome, log into Flipkart Seller Portal, and rerun python main.py."
                 )
 
         raise APIError(f"Request to {full_url} failed after maximum retry attempts.")

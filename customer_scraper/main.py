@@ -433,13 +433,15 @@ def main():
     logger.info("  Input File: %s", INPUT_FILE_PATH.name)
     logger.info("==========================================")
 
-    # If no session cookies found, attempt automatic refresh/extraction from browser
-    if not auth_manager.cookies:
-        logger.info("No active session cookies found in %s. Connecting to browser via CDP...", SESSION_CONFIG_PATH.name)
+    # Verify and ensure valid session credentials on startup
+    logger.info("Verifying active session status...")
+    session_valid = auth_manager.ensure_valid_session(seller_id=args.seller_id)
+    if not session_valid:
+        logger.warning("Initial session check failed. Attempting automated browser extraction from Chrome...")
         try:
             auth_success = auth_manager.refresh_session(seller_id=args.seller_id)
             if not auth_success or not auth_manager.cookies:
-                logger.error("Authentication required to proceed. Please ensure Chrome is open with CDP and logged in.")
+                logger.error("Authentication required to proceed. Please ensure Chrome is open with remote debugging on port 9222 and logged in.")
                 return
         except Exception as e:
             logger.error("Authentication error: %s", str(e))
@@ -621,31 +623,33 @@ def main():
                 except AuthExpiredError as auth_err:
                     consecutive_auth_failures += 1
                     logger.warning(
-                        "[AUTH EXPIRY] Session expired while processing %s (Attempt %d/%d). Automatically refreshing session via CDP and resuming...",
+                        "⚠️ [AUTH EXPIRY] Session expired while processing %s (Attempt %d/%d). Clearing expired session and auto-refreshing...",
                         customer_id, seller_attempt, max_seller_retries
                     )
                     try:
+                        auth_manager.clear_session()
                         refresh_ok = auth_manager.refresh_session(seller_id=DEFAULT_SELLER_ID)
-                        if refresh_ok:
-                            logger.info("[AUTH RECOVERED] Successfully re-authenticated via CDP! Automatically continuing scraping without interruption...")
+                        if refresh_ok and auth_manager.cookies:
+                            logger.info("✅ [AUTH RECOVERED] Successfully re-authenticated via Chrome! Continuing scraping...")
                             consecutive_auth_failures = 0
                             time.sleep(0.5)
                             continue  # Automatically retry this seller attempt immediately
                     except Exception as refresh_err:
                         logger.error("Automatic session refresh failed: %s", str(refresh_err))
 
-                    # If multiple consecutive auth failures occur (e.g. temporary network / Chrome CDP latency)
+                    # If multiple consecutive auth failures occur
                     if seller_attempt >= max_seller_retries:
-                        if consecutive_auth_failures >= 5:
+                        if consecutive_auth_failures >= 3:
                             logger.warning(
-                                "[AUTH RETRY LOOP] Multiple consecutive auth failures (%d). Backing off 10s for automated recovery...",
+                                "[AUTH RETRY LOOP] Multiple consecutive auth failures (%d). Backing off 5s for automated recovery...",
                                 consecutive_auth_failures
                             )
-                            time.sleep(10)
+                            time.sleep(5)
                             try:
+                                auth_manager.clear_session()
                                 if auth_manager.refresh_session(seller_id=DEFAULT_SELLER_ID):
                                     consecutive_auth_failures = 0
-                                    logger.info("[AUTH RECOVERED] Auto-refresh succeeded after backoff. Resuming pipeline.")
+                                    logger.info("✅ [AUTH RECOVERED] Auto-refresh succeeded after backoff. Resuming pipeline.")
                             except Exception as re_err:
                                 logger.error("Automated refresh retry error: %s", str(re_err))
 

@@ -154,10 +154,115 @@ class AuthManager:
         return "; ".join(f"{k}={v}" for k, v in self.cookies.items() if v is not None and str(v).strip())
 
     def clear_session(self) -> None:
-        """Clears session in memory without wiping disk file prematurely."""
+        """Clears stale session cookies and headers from memory and session file."""
         self.cookies = {}
-        self.headers = {}
+        self.headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/152.0.0.0 Safari/537.36"
+            ),
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive",
+            "Content-Type": "application/json",
+            "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
+            "Referer": "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html",
+            "operation": "query",
+            "operation-name": "GetListingRows",
+            "x-internal-env-type": "WEB",
+            "x-marketplace-context": "ALL",
+            "x-requested-with": "XMLHttpRequest",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "sec-ch-ua": '"Not=A?Brand";v="99", "Google Chrome";v="152", "Chromium";v="152"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+        }
         self.session = requests.Session()
+        if self.session_path.exists():
+            try:
+                with open(self.session_path, "w", encoding="utf-8") as f:
+                    json.dump({"cookies": {}, "headers": self.headers}, f, indent=4)
+                logger.info("Cleared stale session from %s", self.session_path.name)
+            except Exception as e:
+                logger.debug("Failed to reset session file: %s", str(e))
+
+    def validate_session_alive(self, test_seller_id: str = DEFAULT_SELLER_ID) -> bool:
+        """
+        Quickly tests whether current session credentials are live and authorized.
+        Returns True if authenticated, False if expired or invalid.
+        """
+        if not self.cookies:
+            return False
+
+        csrf = self.get_csrf_token()
+        if not csrf:
+            return False
+
+        test_url = f"{self.base_url.rstrip('/')}/getSellerDetails?sellerId={test_seller_id}"
+        req_headers = dict(self.headers)
+        req_headers["FK-CSRF-TOKEN"] = csrf
+        req_headers["fk-csrf-token"] = csrf
+
+        cookie_str = self.get_cookie_header_string()
+        if cookie_str:
+            req_headers["Cookie"] = cookie_str
+
+        try:
+            resp = self.session.get(test_url, headers=req_headers, timeout=(5, 8), allow_redirects=True)
+            if self.is_session_expired(resp):
+                return False
+
+            if resp.status_code == 200:
+                ct = resp.headers.get("Content-Type", "").lower()
+                if "application/json" in ct or resp.text.strip().startswith("{"):
+                    try:
+                        data = resp.json()
+                        if isinstance(data, dict):
+                            if "result" in data or "displayName" in data or "profileInfo" in data or "status" in data:
+                                return True
+                    except Exception:
+                        pass
+            return False
+        except Exception:
+            return False
+
+    def ensure_valid_session(self, seller_id: Optional[str] = None, force_refresh: bool = False) -> bool:
+        """
+        Verifies session health. If expired or missing, clears stale cookies and
+        automatically re-extracts a fresh session from Chrome.
+        """
+        target_seller = str(seller_id).strip() if seller_id else DEFAULT_SELLER_ID
+
+        if not force_refresh and self.validate_session_alive(target_seller):
+            logger.info("✅ Session verified: Active and authenticated (%d cookies, %d headers)", len(self.cookies), len(self.headers))
+            return True
+
+        logger.warning("⚠️ [AUTH] Session is expired, invalid, or missing in %s.", self.session_path.name)
+        print("\n" + "=" * 75)
+        print("⚠️ [SESSION EXPIRED DETECTED]")
+        print("   Current session in session.json is expired or invalid.")
+        print("🔄 Clearing expired session and extracting fresh session from Chrome...")
+        print("=" * 75 + "\n")
+
+        # 1. Clear stale session
+        self.clear_session()
+
+        # 2. Extract fresh session from Chrome via CDP
+        try:
+            refreshed = self.refresh_session(seller_id=target_seller, target_api="all")
+            if refreshed and self.cookies:
+                print("\n" + "=" * 75)
+                print("✅ [AUTH READY] Fresh session successfully captured from Chrome!")
+                print(f"   Cookies: {len(self.cookies)} | CSRF Token: {self.get_csrf_token() or 'N/A'}")
+                print("=" * 75 + "\n")
+                return True
+        except Exception as e:
+            logger.error("Session refresh failed: %s", str(e))
+
+        return False
 
     def refresh_session(self, seller_id: Optional[str] = None, target_api: str = "all") -> bool:
         """
@@ -203,12 +308,12 @@ class AuthManager:
                     )
                     return True
                 else:
-                    logger.warning("[AUTH] Attempt %d/%d: Session extraction returned empty cookies. Retrying in 2s...", attempt, max_refresh_attempts)
+                    logger.warning("[AUTH] Attempt %d/%d: Session extraction returned empty cookies. Retrying in 1s...", attempt, max_refresh_attempts)
             except Exception as e:
                 logger.error("[AUTH] Attempt %d/%d: CDP session refresh error: %s", attempt, max_refresh_attempts, str(e))
 
             if attempt < max_refresh_attempts:
-                time.sleep(2)
+                time.sleep(1)
 
         raise AuthExpiredError(
             f"Automated session refresh failed after {max_refresh_attempts} attempts. Please ensure Chrome is running with debugging port on {self.playwright_handler.cdp_url}."
@@ -271,41 +376,59 @@ class AuthManager:
         """
         Determines whether the given HTTP response indicates an unauthenticated/expired session.
         """
-        # Status code 401 Unauthorized or 403 Forbidden
-        if response.status_code in (401, 403):
+        # Status code 401 Unauthorized, 403 Forbidden, 419 Auth Timeout, 440 Login Timeout
+        if response.status_code in (401, 403, 419, 440):
             return True
 
-        # Check for redirection to login/SSO URL
+        # Check if redirected to login / SSO / auth page
+        curr_url = str(response.url).lower()
+        if any(term in curr_url for term in ("/login", "login.", "sso.", "/signin", "auth.")):
+            return True
+
+        # Check for redirection in history
         if response.history:
             for resp in response.history:
                 if resp.status_code in (301, 302, 303, 307, 308):
                     loc = resp.headers.get("Location", "").lower()
-                    if "login" in loc or "auth" in loc or "sso" in loc:
+                    if any(term in loc for term in ("login", "auth", "sso", "signin")):
                         return True
 
-        # Check content type and content for login page indicators
+        # Check content type: if an API returned text/html instead of JSON, it's a login page
         content_type = response.headers.get("Content-Type", "").lower()
         if "text/html" in content_type:
             text = response.text.lower()
-            if "<html" in text and ("login" in text or "signin" in text or "unauthorized" in text):
+            if any(term in text for term in ("login", "signin", "unauthorized", "sign in", "password", "sso", "redirect")):
+                return True
+            if "<html" in text or "<!doctype" in text:
                 return True
 
         # Check JSON error payloads
-        if "application/json" in content_type:
+        if "application/json" in content_type or response.text.strip().startswith("{"):
             try:
                 data = response.json()
                 if isinstance(data, dict):
                     error_msg = str(data.get("error", "")).lower()
                     status_val = str(data.get("status", "")).lower()
                     message_val = str(data.get("message", "")).lower()
+                    code_val = str(data.get("code", "")).lower()
+                    error_code = str(data.get("errorCode", "")).lower()
 
-                    if any(term in error_msg for term in ("unauthorized", "expired", "invalid session", "forbidden", "auth")):
+                    expired_terms = (
+                        "unauthorized", "expired", "invalid session", "forbidden", "session",
+                        "auth", "not logged in", "session_invalid", "token expired", "invalid_token"
+                    )
+                    if any(term in error_msg for term in expired_terms):
                         return True
-                    if any(term in message_val for term in ("unauthorized", "expired", "invalid session", "forbidden", "session")):
+                    if any(term in message_val for term in expired_terms):
                         return True
-                    if status_val in ("401", "403", "unauthorized"):
+                    if any(term in error_code for term in expired_terms):
+                        return True
+                    if code_val in ("401", "403", "419"):
+                        return True
+                    if status_val in ("401", "403", "419", "unauthorized") and not data.get("result"):
                         return True
             except Exception:
                 pass
 
         return False
+

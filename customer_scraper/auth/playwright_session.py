@@ -110,27 +110,29 @@ class PlaywrightSessionHandler:
         target_url = initial_url or SELLER_INFO_URL.format(seller_id=DEFAULT_FALLBACK_SELLER_ID)
         logger.info("Chrome CDP not detected on %s. Attempting to launch Chrome...", self.cdp_url)
 
-        # Standard Chrome launch commands
-        launch_cmds = [
-            [
-                "chrome.exe",
-                f"--remote-debugging-port={CDP_PORT}",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--start-maximized",
-                target_url,
-            ],
-            [
-                "chrome",
-                f"--remote-debugging-port={CDP_PORT}",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--start-maximized",
-                target_url,
-            ],
+        # Standard Chrome launch candidates on Windows and POSIX
+        possible_chrome_paths = [
+            "chrome.exe",
+            "chrome",
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe"),
         ]
 
-        for cmd in launch_cmds:
+        launched = False
+        for chrome_bin in possible_chrome_paths:
+            if not chrome_bin:
+                continue
+            cmd = [
+                chrome_bin,
+                f"--remote-debugging-port={CDP_PORT}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--start-maximized",
+                target_url,
+            ]
             try:
                 if sys.platform == "win32":
                     subprocess.Popen(
@@ -139,15 +141,19 @@ class PlaywrightSessionHandler:
                     )
                 else:
                     subprocess.Popen(cmd, start_new_session=True)
+                launched = True
                 break
             except Exception as e:
-                logger.debug("Failed to launch Chrome with %s: %s", cmd[0], str(e))
+                logger.debug("Failed to launch Chrome via %s: %s", chrome_bin, str(e))
 
-        # Wait up to 10 seconds for CDP endpoint to respond
-        for _ in range(20):
+        if not launched:
+            logger.warning("Could not automatically launch Chrome binary.")
+
+        # Wait up to 6 seconds for CDP endpoint to respond
+        for _ in range(12):
             time.sleep(0.5)
             if self.is_browser_open():
-                logger.info("Chrome successfully launched and listening on CDP %s", self.cdp_url)
+                logger.info("Chrome successfully connected and listening on CDP %s", self.cdp_url)
                 return True
 
         return False
@@ -184,7 +190,10 @@ class PlaywrightSessionHandler:
 
         async with async_playwright() as p:
             try:
-                browser = await p.chromium.connect_over_cdp(self.cdp_url)
+                browser = await asyncio.wait_for(p.chromium.connect_over_cdp(self.cdp_url), timeout=8.0)
+            except asyncio.TimeoutError:
+                logger.error("[SESSION] Timeout connecting to Chrome CDP on %s (8s)", self.cdp_url)
+                return None
             except Exception as e:
                 logger.error("[SESSION] Could not connect to Chrome CDP (%s): %s", self.cdp_url, str(e))
                 return None
@@ -256,21 +265,24 @@ class PlaywrightSessionHandler:
                 logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening: %s", target_info_url)
                 try:
                     tab_info = await context.new_page()
-                    await tab_info.goto(target_info_url, timeout=15000, wait_until="domcontentloaded")
+                    await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=10.0)
                 except Exception as ex1:
                     logger.debug("[SESSION] Tab 1 open notice: %s", str(ex1))
             else:
-                logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Navigating / reloading...", tab_info.url)
+                logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Reloading...", tab_info.url)
                 try:
-                    await tab_info.goto(target_info_url, timeout=15000, wait_until="domcontentloaded")
+                    await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=8.0)
                 except Exception:
                     try:
-                        await tab_info.reload(timeout=15000, wait_until="domcontentloaded")
+                        await asyncio.wait_for(tab_info.reload(wait_until="domcontentloaded"), timeout=8.0)
                     except Exception as ex1:
                         logger.debug("[SESSION] Tab 1 reload notice: %s", str(ex1))
 
-            # Wait 2 seconds for background SPA API calls and cookie setting to complete
-            await asyncio.sleep(2.0)
+            # Wait up to 3 seconds for background SPA API calls to fire or until CSRF is captured
+            for _ in range(15):
+                if csrf_token_found:
+                    break
+                await asyncio.sleep(0.2)
 
             # ------------------------------------------------------------
             # Step 2: Extract All Live Cookies for fkcloud.it domain
