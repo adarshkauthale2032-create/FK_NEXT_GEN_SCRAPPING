@@ -265,10 +265,19 @@ def calculate_match_score(
 
 class InstagramScraper:
     """
-    Scraper and matcher for discovering seller brand Instagram accounts via search.
+    Scraper and matcher for discovering seller brand Instagram accounts.
+    Uses Chrome DevTools Protocol (CDP: 9222) to perform Google searches in a single
+    reusable browser tab and extracts the first verified official Instagram profile URL.
     """
 
-    def __init__(self, request_delay: float = 0.5, max_results: int = 10, min_score: int = 20):
+    def __init__(
+        self,
+        cdp_url: str = CDP_URL,
+        request_delay: float = 0.5,
+        max_results: int = 10,
+        min_score: int = 20,
+    ):
+        self.cdp_url = cdp_url
         self.request_delay = request_delay
         self.max_results = max_results
         self.min_score = min_score
@@ -279,6 +288,147 @@ class InstagramScraper:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         })
+
+    def _is_cdp_available(self) -> bool:
+        """Quickly checks if Chrome is listening on CDP port 9222."""
+        import urllib.request
+        try:
+            req = urllib.request.Request(
+                f"{self.cdp_url}/json/version",
+                headers={"User-Agent": "FlipkartSessionHandler"},
+            )
+            with urllib.request.urlopen(req, timeout=1.0) as resp:
+                return resp.status == 200
+        except Exception:
+            return False
+
+    async def _async_google_search(self, clean_brand: str) -> Optional[str]:
+        """
+        Connects to Chrome CDP (port 9222) and performs a Google search for the brand's
+        official Instagram handle in a SINGLE reusable browser tab (no extra tabs created).
+        Extracts and returns the first verified Instagram profile URL containing the brand name.
+        """
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            logger.debug("Playwright not installed, skipping CDP Google search.")
+            return None
+
+        query = f"{clean_brand} official instagram handle"
+        search_url = f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}"
+
+        async with async_playwright() as p:
+            try:
+                browser = await asyncio.wait_for(p.chromium.connect_over_cdp(self.cdp_url), timeout=6.0)
+            except Exception as e:
+                logger.debug("[Instagram CDP] Could not connect to Chrome CDP: %s", str(e))
+                return None
+
+            if not browser.contexts:
+                return None
+
+            context = browser.contexts[0]
+
+            # ------------------------------------------------------------
+            # Reuse ONE dedicated tab in Chrome (do not open new tabs per brand)
+            # ------------------------------------------------------------
+            search_tab = None
+            for page in context.pages:
+                try:
+                    p_url = page.url.lower()
+                    if "google.com" in p_url or "about:blank" in p_url:
+                        search_tab = page
+                        break
+                except Exception:
+                    pass
+
+            # If no google/blank tab found, find any tab that is not the Flipkart portal
+            if search_tab is None:
+                for page in context.pages:
+                    try:
+                        p_url = page.url.lower()
+                        if "fkcloud.it" not in p_url and "flipkart" not in p_url:
+                            search_tab = page
+                            break
+                    except Exception:
+                        pass
+
+            # If all open tabs are Flipkart tabs, create ONE dedicated search tab
+            if search_tab is None:
+                try:
+                    search_tab = await context.new_page()
+                except Exception:
+                    search_tab = context.pages[0] if context.pages else None
+
+            if not search_tab:
+                return None
+
+            # Navigate the single tab to Google Search
+            logger.info("🔍 [Google Search in Chrome 9222] Searching for '%s'...", clean_brand)
+            try:
+                await asyncio.wait_for(
+                    search_tab.goto(search_url, wait_until="domcontentloaded"),
+                    timeout=10.0,
+                )
+            except Exception as ex_nav:
+                logger.debug("[Google Search Nav Notice] %s", str(ex_nav))
+
+            # Wait briefly for search elements to render
+            await asyncio.sleep(1.0)
+
+            # Extract all anchor links from Google search result page
+            try:
+                links_data = await search_tab.evaluate("""() => {
+                    const results = [];
+                    const anchors = document.querySelectorAll('a[href]');
+                    for (const a of anchors) {
+                        const href = a.getAttribute('href') || a.href || '';
+                        if (href.includes('instagram.com')) {
+                            results.push({
+                                href: href,
+                                text: a.innerText || '',
+                            });
+                        }
+                    }
+                    return results;
+                }""")
+            except Exception as ex_eval:
+                logger.debug("[Google Search Eval Notice] %s", str(ex_eval))
+                links_data = []
+
+            # Check page content with regex fallback
+            if not links_data:
+                try:
+                    content = await search_tab.content()
+                    found_raw_urls = re.findall(r'https?://(?:www\.)?instagram\.com/[a-zA-Z0-9._]+/?', content)
+                    links_data = [{"href": u, "text": ""} for u in found_raw_urls]
+                except Exception:
+                    pass
+
+            # Filter and validate extracted Instagram candidate URLs
+            for item in links_data:
+                raw_href = item.get("href", "")
+                if "/url?q=" in raw_href:
+                    parsed = urllib.parse.urlparse(raw_href)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    if "q" in qs:
+                        raw_href = qs["q"][0]
+
+                formatted_url = extract_instagram_url_from_string(raw_href)
+                if not formatted_url:
+                    continue
+
+                username = get_instagram_username(formatted_url)
+                if not username:
+                    continue
+
+                # Verify brand name is contained in the Instagram URL / username
+                if is_brand_in_instagram_url(clean_brand, formatted_url):
+                    logger.info("📸 [Google Instagram Match] Found: %s for brand '%s'", formatted_url, clean_brand)
+                    return formatted_url
+
+            logger.info("ℹ️ [Google Search] No matching Instagram profile containing brand '%s' in Google results.", clean_brand)
+            return None
 
     def search_instagram(self, brand_name: Optional[str]) -> Optional[str]:
         """
@@ -301,7 +451,22 @@ class InstagramScraper:
             logger.debug("[Instagram Cache] Hit for '%s' -> %s", clean_brand, cached_url or "NOT FOUND")
             return cached_url
 
-        logger.info("🔍 [Instagram Search] Searching for '%s'...", clean_brand)
+        # ------------------------------------------------------------
+        # Engine 1: Google Search inside active Chrome Browser (Port 9222)
+        # ------------------------------------------------------------
+        if self._is_cdp_available():
+            try:
+                found_url = asyncio.run(self._async_google_search(clean_brand))
+                if found_url:
+                    self.cache[cache_key] = found_url
+                    return found_url
+            except Exception as ex_cdp:
+                logger.debug("[Instagram CDP Google Search Notice] %s", str(ex_cdp))
+
+        # ------------------------------------------------------------
+        # Engine 2: Fallback to DuckDuckGo / HTML Search
+        # ------------------------------------------------------------
+        logger.info("🔍 [Fallback Search] Searching for '%s'...", clean_brand)
         queries = [
             f"site:instagram.com {clean_brand}",
             f"{clean_brand} instagram official",
@@ -310,20 +475,15 @@ class InstagramScraper:
 
         all_candidates: List[Dict[str, Any]] = []
 
-        # ------------------------------------------------------------
-        # Engine 1: DuckDuckGo Search via DDGS Library
-        # ------------------------------------------------------------
         if DDGS is not None:
             try:
-                ddgs = DDGS(timeout=10)
+                ddgs = DDGS(timeout=8)
                 for query in queries:
                     results = []
                     try:
-                        # Try keyword-based invocation
                         results = list(ddgs.text(keywords=query, max_results=self.max_results))
                     except Exception:
                         try:
-                            # Try positional invocation
                             results = list(ddgs.text(query, max_results=self.max_results))
                         except Exception as e_ddg:
                             logger.debug("[DDGS Error] '%s': %s", query, str(e_ddg))
@@ -352,24 +512,21 @@ class InstagramScraper:
                                 })
 
                     if all_candidates:
-                        break  # Found candidates from first query, proceed to evaluation
+                        break
 
             except Exception as ex_ddgs:
                 logger.debug("[Instagram DDGS Engine notice] %s", str(ex_ddgs))
 
-        # ------------------------------------------------------------
-        # Engine 2: Direct DuckDuckGo HTML Fallback
-        # ------------------------------------------------------------
+        # Direct DuckDuckGo HTML Fallback
         if not all_candidates:
             try:
                 for query in [f"site:instagram.com {clean_brand}", f"{clean_brand} instagram"]:
                     resp = self.http_session.post(
                         "https://html.duckduckgo.com/html/",
                         data={"q": query, "b": ""},
-                        timeout=8,
+                        timeout=6,
                     )
                     if resp.status_code == 200:
-                        # Try BeautifulSoup if available
                         try:
                             from bs4 import BeautifulSoup
                             soup = BeautifulSoup(resp.text, "html.parser")
@@ -388,7 +545,6 @@ class InstagramScraper:
                                                 "title": a_tag.get_text(),
                                             })
                         except ImportError:
-                            # Regex fallback
                             found_links = re.findall(r'href="([^"]+)"', resp.text)
                             for raw_l in found_links:
                                 formatted_url = extract_instagram_url_from_string(raw_l)
@@ -409,26 +565,13 @@ class InstagramScraper:
             except Exception as ex_html:
                 logger.debug("[Instagram HTML Fallback notice] %s", str(ex_html))
 
-        # ------------------------------------------------------------
         # Evaluation & Filtering: Enforce that brand name is included in URL
-        # ------------------------------------------------------------
-        if not all_candidates:
-            logger.info("ℹ️ [Instagram] No matching profile found for '%s' (leaving blank)", clean_brand)
-            self.cache[cache_key] = None
-            return None
-
-        # Filter candidates to only those containing the brand name in the Instagram URL
         valid_candidates = [
             c for c in all_candidates
             if is_brand_in_instagram_url(clean_brand, c["url"]) and c["score"] >= self.min_score
         ]
 
         if not valid_candidates:
-            logger.info(
-                "ℹ️ [Instagram Brand Check] Found %d candidate(s) for '%s', but none contained the brand name in the URL (leaving blank).",
-                len(all_candidates),
-                clean_brand,
-            )
             self.cache[cache_key] = None
             return None
 
@@ -439,3 +582,4 @@ class InstagramScraper:
         logger.info("📸 [Instagram Found & Validated] '%s' -> %s (Score: %d)", clean_brand, found_url, best["score"])
         self.cache[cache_key] = found_url
         return found_url
+
