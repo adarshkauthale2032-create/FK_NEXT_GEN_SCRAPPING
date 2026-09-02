@@ -250,37 +250,68 @@ class PlaywrightSessionHandler:
             tab_info = None
 
             # ------------------------------------------------------------
-            # Step 1: Keep / Refresh Tab 1 (Seller Info)
+            # Step 1: Manage Flipkart Seller Portal Tab (or force reopen clean tab)
             # ------------------------------------------------------------
-            for page in context.pages:
-                try:
-                    p_url = page.url.lower()
-                    if "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
-                        tab_info = page
-                        break
-                except Exception:
-                    pass
+            if force_new_tab:
+                logger.info("[SESSION] Force new tab requested: Closing existing Flipkart tabs and opening a fresh tab...")
+                old_portal_tabs = [
+                    p for p in context.pages
+                    if "seller-support.fkcloud.it" in p.url.lower() or "fkcloud.it" in p.url.lower()
+                ]
 
-            if tab_info is None:
-                logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening: %s", target_info_url)
+                # 1. Open new tab first so browser context always remains active
                 try:
                     tab_info = await context.new_page()
-                    await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=10.0)
-                except Exception as ex1:
-                    logger.debug("[SESSION] Tab 1 open notice: %s", str(ex1))
-            else:
-                logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Reloading...", tab_info.url)
-                try:
-                    await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=8.0)
-                except Exception:
-                    try:
-                        await asyncio.wait_for(tab_info.reload(wait_until="domcontentloaded"), timeout=8.0)
-                    except Exception as ex1:
-                        logger.debug("[SESSION] Tab 1 reload notice: %s", str(ex1))
+                except Exception as ex_np:
+                    logger.debug("[SESSION] Error creating new page: %s", str(ex_np))
+                    tab_info = context.pages[0] if context.pages else None
 
-            # Wait up to 3 seconds for background SPA API calls to fire or until CSRF is captured
-            for _ in range(15):
-                if csrf_token_found:
+                # 2. Close old portal tabs
+                for old_p in old_portal_tabs:
+                    if old_p != tab_info:
+                        try:
+                            await old_p.close()
+                        except Exception:
+                            pass
+
+                # 3. Navigate new tab to portal URL
+                if tab_info:
+                    logger.info("[SESSION] Navigating fresh tab to %s...", target_info_url)
+                    try:
+                        await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=12.0)
+                    except Exception as ex_goto:
+                        logger.debug("[SESSION] Fresh tab goto notice: %s", str(ex_goto))
+            else:
+                # Normal mode: find and reload existing tab or open if not found
+                for page in context.pages:
+                    try:
+                        p_url = page.url.lower()
+                        if "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
+                            tab_info = page
+                            break
+                    except Exception:
+                        pass
+
+                if tab_info is None:
+                    logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening: %s", target_info_url)
+                    try:
+                        tab_info = await context.new_page()
+                        await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=10.0)
+                    except Exception as ex1:
+                        logger.debug("[SESSION] Tab 1 open notice: %s", str(ex1))
+                else:
+                    logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Reloading...", tab_info.url)
+                    try:
+                        await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=8.0)
+                    except Exception:
+                        try:
+                            await asyncio.wait_for(tab_info.reload(wait_until="domcontentloaded"), timeout=8.0)
+                        except Exception as ex1:
+                            logger.debug("[SESSION] Tab 1 reload notice: %s", str(ex1))
+
+            # Wait up to 3.5 seconds for background SPA API calls to fire or until CSRF is captured
+            for _ in range(18):
+                if csrf_token_found and "connect.sid" in captured_cookies:
                     break
                 await asyncio.sleep(0.2)
 
@@ -386,9 +417,15 @@ class PlaywrightSessionHandler:
                 logger.debug("Failed to read %s: %s", self.session_file, str(e))
         return {"cookies": {}, "headers": {}}
 
-    def refresh_and_extract_session(self, seller_id: Optional[str] = None, target_api: str = "all") -> Optional[Dict[str, Any]]:
+    def refresh_and_extract_session(
+        self,
+        seller_id: Optional[str] = None,
+        target_api: str = "all",
+        force_new_tab: bool = False,
+    ) -> Optional[Dict[str, Any]]:
         """
         Synchronous entry point to refresh Flipkart browser page and extract updated session.
+        If force_new_tab is True, closes existing Flipkart portal tabs and opens a fresh tab.
         """
         if not self.is_browser_open():
             launched = self.launch_chrome_if_needed(
@@ -398,7 +435,13 @@ class PlaywrightSessionHandler:
                 logger.error("Chrome is not running on port %d and could not be started.", CDP_PORT)
                 return None
 
-        return asyncio.run(self._async_refresh_and_extract_session(seller_id=seller_id, target_api=target_api))
+        return asyncio.run(
+            self._async_refresh_and_extract_session(
+                seller_id=seller_id,
+                target_api=target_api,
+                force_new_tab=force_new_tab,
+            )
+        )
 
 
 if __name__ == "__main__":
