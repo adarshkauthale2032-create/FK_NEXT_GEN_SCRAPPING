@@ -12,6 +12,7 @@ from scrapers.instagram_scraper import (
     calculate_match_score,
     clean_instagram_url,
     get_instagram_username,
+    is_brand_in_instagram_url,
     is_valid_instagram_profile,
     normalize_text,
 )
@@ -60,6 +61,30 @@ class TestInstagramHelpers(unittest.TestCase):
         # Penalize fan / meme accounts
         score_fan = calculate_match_score("Woostro", "woostro_fanpage", "Woostro Fan Club", "Fan page")
         self.assertLess(score_fan, 40)
+
+    def test_is_brand_in_instagram_url(self):
+        # 1. Exact / variations of lenskart
+        self.assertTrue(is_brand_in_instagram_url("lenskart", "https://www.instagram.com/lenskart/"))
+        self.assertTrue(is_brand_in_instagram_url("lenskart", "https://www.instagram.com/lens.kart/"))
+        self.assertTrue(is_brand_in_instagram_url("lenskart", "https://www.instagram.com/lens_kart/"))
+        self.assertTrue(is_brand_in_instagram_url("lenskart", "https://www.instagram.com/lens_kart_official/"))
+        self.assertTrue(is_brand_in_instagram_url("lenskart", "https://www.instagram.com/lenskartofficial/"))
+        self.assertTrue(is_brand_in_instagram_url("lens.kart", "https://www.instagram.com/lenskart/"))
+        self.assertTrue(is_brand_in_instagram_url("LENS_KART", "https://www.instagram.com/lens.kart.india/"))
+        self.assertTrue(is_brand_in_instagram_url("lens-kart", "https://www.instagram.com/lens_kart/"))
+
+        # 2. Multi-word brand names
+        self.assertTrue(is_brand_in_instagram_url("IBELL POWER TOOLS", "https://www.instagram.com/ibell_tools/"))
+        self.assertTrue(is_brand_in_instagram_url("The Derma Co", "https://www.instagram.com/thedermacoindia/"))
+        self.assertTrue(is_brand_in_instagram_url("Kalivera Healthcare", "https://www.instagram.com/kaliverahealthcare/"))
+
+        # 3. Mismatched brands (should fail validation)
+        self.assertFalse(is_brand_in_instagram_url("lenskart", "https://www.instagram.com/specsmakers/"))
+        self.assertFalse(is_brand_in_instagram_url("lenskart", "https://www.instagram.com/titaneyeplus/"))
+        self.assertFalse(is_brand_in_instagram_url("IBELL", "https://www.instagram.com/boschtools/"))
+        self.assertFalse(is_brand_in_instagram_url("BRAND_1", "https://www.instagram.com/somebrand/"))
+        self.assertFalse(is_brand_in_instagram_url("", "https://www.instagram.com/lenskart/"))
+        self.assertFalse(is_brand_in_instagram_url("lenskart", ""))
 
 
 class TestInstagramScraperMocked(unittest.TestCase):

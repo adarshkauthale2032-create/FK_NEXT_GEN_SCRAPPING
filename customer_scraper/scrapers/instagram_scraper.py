@@ -148,6 +148,65 @@ def clean_instagram_url(url: Optional[str]) -> Optional[str]:
     return extract_instagram_url_from_string(url)
 
 
+def is_brand_in_instagram_url(brand_name: Optional[str], instagram_url: Optional[str]) -> bool:
+    """
+    Validates whether the brand name (in any format, e.g. lenskart, lens.kart, lens_kart)
+    is contained within the Instagram profile URL/username.
+
+    Returns True if the brand name is present in the Instagram URL (case-insensitively
+    and ignoring punctuation/separators like ., _, -), otherwise False.
+    """
+    if not brand_name or not instagram_url:
+        return False
+
+    formatted_url = extract_instagram_url_from_string(instagram_url)
+    if not formatted_url:
+        return False
+
+    username = get_instagram_username(formatted_url)
+    if not username:
+        return False
+
+    u_raw = username.lower().strip()
+    u_compact = re.sub(r"[^a-z0-9]", "", u_raw)
+    if not u_compact:
+        return False
+
+    b_raw = str(brand_name).strip().lower()
+    # Ignore synthetic placeholder names like BRAND_1
+    if b_raw.startswith("brand_") or b_raw in ("null", "none", ""):
+        return False
+
+    b_compact = re.sub(r"[^a-z0-9]", "", b_raw)
+    b_norm_key = brand_key(b_raw)
+
+    if not b_compact:
+        return False
+
+    # 1. Compact brand name is inside username (e.g. 'lenskart' in 'lenskartofficial' or 'lens.kart' -> 'lenskart')
+    if len(b_compact) >= 2 and b_compact in u_compact:
+        return True
+
+    # 2. Normalized brand key is inside username (e.g. 'bombayshaving' in 'bombayshavingcompany')
+    if len(b_norm_key) >= 2 and b_norm_key in u_compact:
+        return True
+
+    # 3. Compact username is inside brand name (e.g. 'kalivera' in 'kaliverahealthcare')
+    if len(u_compact) >= 3 and (u_compact in b_compact or (b_norm_key and u_compact in b_norm_key)):
+        return True
+
+    # 4. Multi-word token matching (e.g. 'lens' and 'kart' in 'lens_kart', or primary brand word in username)
+    b_tokens = [re.sub(r"[^a-z0-9]", "", t) for t in normalize_text(b_raw).split() if len(t) >= 3]
+    if b_tokens:
+        matched_tokens = [t for t in b_tokens if t in u_compact]
+        if len(matched_tokens) == len(b_tokens):
+            return True
+        if matched_tokens and len(matched_tokens[0]) >= 4 and len(matched_tokens[0]) >= (len(b_compact) * 0.4):
+            return True
+
+    return False
+
+
 def calculate_match_score(
     brand_name: str,
     username: str,
@@ -351,28 +410,32 @@ class InstagramScraper:
                 logger.debug("[Instagram HTML Fallback notice] %s", str(ex_html))
 
         # ------------------------------------------------------------
-        # Evaluation & Filtering
+        # Evaluation & Filtering: Enforce that brand name is included in URL
         # ------------------------------------------------------------
         if not all_candidates:
             logger.info("ℹ️ [Instagram] No matching profile found for '%s' (leaving blank)", clean_brand)
             self.cache[cache_key] = None
             return None
 
-        all_candidates.sort(key=lambda x: x["score"], reverse=True)
-        best = all_candidates[0]
+        # Filter candidates to only those containing the brand name in the Instagram URL
+        valid_candidates = [
+            c for c in all_candidates
+            if is_brand_in_instagram_url(clean_brand, c["url"]) and c["score"] >= self.min_score
+        ]
 
-        if best["score"] < self.min_score:
+        if not valid_candidates:
             logger.info(
-                "ℹ️ [Instagram Low Confidence] '%s' -> %s (Score: %d < %d threshold, leaving blank)",
+                "ℹ️ [Instagram Brand Check] Found %d candidate(s) for '%s', but none contained the brand name in the URL (leaving blank).",
+                len(all_candidates),
                 clean_brand,
-                best["url"],
-                best["score"],
-                self.min_score,
             )
             self.cache[cache_key] = None
             return None
 
+        valid_candidates.sort(key=lambda x: x["score"], reverse=True)
+        best = valid_candidates[0]
+
         found_url = best["url"]
-        logger.info("📸 [Instagram Found] '%s' -> %s (Score: %d)", clean_brand, found_url, best["score"])
+        logger.info("📸 [Instagram Found & Validated] '%s' -> %s (Score: %d)", clean_brand, found_url, best["score"])
         self.cache[cache_key] = found_url
         return found_url

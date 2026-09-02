@@ -526,25 +526,43 @@ def main():
                     unique_email = api3_data.get("unique_email", "No")
                     is_email_d2c = str(unique_email).strip().lower() == "yes"
 
-                    # Step 4: Search Instagram for Account Name and Approved Brand Name
+                    # Step 4: Search Instagram for Brand Name (with strict brand-in-URL validation)
                     instagram_url = ""
+                    from scrapers.instagram_scraper import extract_instagram_url_from_string, is_brand_in_instagram_url
+
+                    # 4a. Check if brand_website_link is directly an Instagram profile
                     if brand_website_link and "instagram.com" in str(brand_website_link).lower():
-                        from scrapers.instagram_scraper import extract_instagram_url_from_string
-                        instagram_url = extract_instagram_url_from_string(brand_website_link) or ""
+                        cand_url = extract_instagram_url_from_string(brand_website_link)
+                        target_name = brand_name or account_name
+                        if cand_url and target_name and is_brand_in_instagram_url(target_name, cand_url):
+                            instagram_url = cand_url
 
-                    if not instagram_url and account_name:
-                        instagram_url = insta_scraper.search_instagram(account_name) or ""
-
-                    # Fallback to unique approved brand names if account name search yielded no Instagram profile
-                    if not instagram_url and brand_name and str(brand_name).strip().lower() not in (str(account_name).strip().lower(), ""):
+                    # 4b. Search Instagram primarily using Brand Name
+                    if not instagram_url and brand_name:
                         instagram_url = insta_scraper.search_instagram(brand_name) or ""
 
+                    # 4c. Search using unique approved brands from API #2
                     if not instagram_url and api2_data.get("unique_brands"):
                         for brand_item in api2_data["unique_brands"]:
-                            if brand_item and str(brand_item).strip().lower() not in (str(account_name).strip().lower(), ""):
-                                instagram_url = insta_scraper.search_instagram(brand_item) or ""
-                                if instagram_url:
+                            if brand_item and str(brand_item).strip().lower() not in (str(brand_name).strip().lower(), ""):
+                                found_insta = insta_scraper.search_instagram(brand_item) or ""
+                                if found_insta:
+                                    instagram_url = found_insta
                                     break
+
+                    # 4d. Fallback search using Account Name (with strict validation against brand_name/account_name)
+                    if not instagram_url and account_name:
+                        found_insta = insta_scraper.search_instagram(account_name) or ""
+                        if found_insta:
+                            target_name = brand_name or account_name
+                            if is_brand_in_instagram_url(target_name, found_insta):
+                                instagram_url = found_insta
+
+                    # Final validation safeguard: If instagram_url is present, ensure target brand name is included
+                    target_name = brand_name or account_name
+                    if instagram_url and target_name and not is_brand_in_instagram_url(target_name, instagram_url):
+                        logger.info("🚫 [Instagram Validation] URL '%s' does not contain brand '%s'. Skipping.", instagram_url, target_name)
+                        instagram_url = ""
 
                     is_insta_d2c = bool(instagram_url and str(instagram_url).strip().lower() not in ("null", "none", "", "n/a", "na"))
 
