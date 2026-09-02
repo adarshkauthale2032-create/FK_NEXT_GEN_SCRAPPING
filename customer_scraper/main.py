@@ -515,6 +515,7 @@ def main():
                     approved_brand = api2_data.get("approved_brand", 0)
                     actual_brand_count = api2_data.get("actual_brand_count", 0)
                     request_id = api2_data.get("request_id", "")
+                    brand_name = api2_data.get("brand_name", "")
                     brand_owner = api2_data.get("brand_owner", "")
                     document_type = api2_data.get("document_type", "")
                     brand_website_link = api2_data.get("brand_website_link", "")
@@ -535,6 +536,9 @@ def main():
                         instagram_url = insta_scraper.search_instagram(account_name) or ""
 
                     # Fallback to unique approved brand names if account name search yielded no Instagram profile
+                    if not instagram_url and brand_name and str(brand_name).strip().lower() not in (str(account_name).strip().lower(), ""):
+                        instagram_url = insta_scraper.search_instagram(brand_name) or ""
+
                     if not instagram_url and api2_data.get("unique_brands"):
                         for brand_item in api2_data["unique_brands"]:
                             if brand_item and str(brand_item).strip().lower() not in (str(account_name).strip().lower(), ""):
@@ -575,8 +579,8 @@ def main():
                             d2c_no_count += 1
 
                         logger.info(
-                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Appr: %s | Act: %s | ReqID: %s | BrOwner: %s | Doc: %s | Web: %s | Insta: %s | UniqEmail: %s | isD2C: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
-                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, approved_brand, actual_brand_count, request_id or "-", brand_owner or "-", document_type or "-", brand_website_link or "-", instagram_url or "-", unique_email, is_d2c_str, total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
+                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Appr: %s | Act: %s | ReqID: %s | Brand: %s | BrOwner: %s | Doc: %s | Web: %s | Insta: %s | UniqEmail: %s | isD2C: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
+                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, approved_brand, actual_brand_count, request_id or "-", brand_name or "-", brand_owner or "-", document_type or "-", brand_website_link or "-", instagram_url or "-", unique_email, is_d2c_str, total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
                         )
                         if total_saved_in_session % 100 == 0:
                             logger.info(

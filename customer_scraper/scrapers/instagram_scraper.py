@@ -242,6 +242,7 @@ class InstagramScraper:
             logger.debug("[Instagram Cache] Hit for '%s' -> %s", clean_brand, cached_url or "NOT FOUND")
             return cached_url
 
+        logger.info("🔍 [Instagram Search] Searching for '%s'...", clean_brand)
         queries = [
             f"site:instagram.com {clean_brand}",
             f"{clean_brand} instagram official",
@@ -305,29 +306,44 @@ class InstagramScraper:
                 for query in [f"site:instagram.com {clean_brand}", f"{clean_brand} instagram"]:
                     resp = self.http_session.post(
                         "https://html.duckduckgo.com/html/",
-                        data={"q": query},
+                        data={"q": query, "b": ""},
                         timeout=8,
                     )
                     if resp.status_code == 200:
-                        # Extract all links
-                        found_links = re.findall(r'href="([^"]+)"', resp.text)
-                        for raw_l in found_links:
-                            formatted_url = extract_instagram_url_from_string(raw_l)
-                            if not formatted_url:
-                                continue
-
-                            username = get_instagram_username(formatted_url)
-                            if not username:
-                                continue
-
-                            score = calculate_match_score(clean_brand, username)
-                            if not any(x["url"] == formatted_url for x in all_candidates):
-                                all_candidates.append({
-                                    "url": formatted_url,
-                                    "username": username,
-                                    "score": score,
-                                    "title": "",
-                                })
+                        # Try BeautifulSoup if available
+                        try:
+                            from bs4 import BeautifulSoup
+                            soup = BeautifulSoup(resp.text, "html.parser")
+                            for a_tag in soup.find_all("a", href=True):
+                                href = a_tag["href"]
+                                formatted_url = extract_instagram_url_from_string(href)
+                                if formatted_url:
+                                    username = get_instagram_username(formatted_url)
+                                    if username:
+                                        score = calculate_match_score(clean_brand, username, a_tag.get_text())
+                                        if not any(x["url"] == formatted_url for x in all_candidates):
+                                            all_candidates.append({
+                                                "url": formatted_url,
+                                                "username": username,
+                                                "score": score,
+                                                "title": a_tag.get_text(),
+                                            })
+                        except ImportError:
+                            # Regex fallback
+                            found_links = re.findall(r'href="([^"]+)"', resp.text)
+                            for raw_l in found_links:
+                                formatted_url = extract_instagram_url_from_string(raw_l)
+                                if formatted_url:
+                                    username = get_instagram_username(formatted_url)
+                                    if username:
+                                        score = calculate_match_score(clean_brand, username)
+                                        if not any(x["url"] == formatted_url for x in all_candidates):
+                                            all_candidates.append({
+                                                "url": formatted_url,
+                                                "username": username,
+                                                "score": score,
+                                                "title": "",
+                                            })
 
                     if all_candidates:
                         break
@@ -338,7 +354,7 @@ class InstagramScraper:
         # Evaluation & Filtering
         # ------------------------------------------------------------
         if not all_candidates:
-            logger.debug("[Instagram] No profile found for '%s'", clean_brand)
+            logger.info("ℹ️ [Instagram] No matching profile found for '%s' (leaving blank)", clean_brand)
             self.cache[cache_key] = None
             return None
 
@@ -346,8 +362,8 @@ class InstagramScraper:
         best = all_candidates[0]
 
         if best["score"] < self.min_score:
-            logger.debug(
-                "[Instagram Low Confidence] '%s' -> %s (Score: %d < %d threshold)",
+            logger.info(
+                "ℹ️ [Instagram Low Confidence] '%s' -> %s (Score: %d < %d threshold, leaving blank)",
                 clean_brand,
                 best["url"],
                 best["score"],

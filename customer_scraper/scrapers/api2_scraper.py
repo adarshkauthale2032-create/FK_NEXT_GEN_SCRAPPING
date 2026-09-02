@@ -237,6 +237,9 @@ class API2Scraper:
 
         # Group request IDs by unique brand name (case-insensitive)
         brand_requests_map: Dict[str, List[str]] = {}
+        brand_display_names: Dict[str, str] = {}
+        req_to_brand_map: Dict[str, str] = {}
+
         for item in all_records:
             if not isinstance(item, dict):
                 continue
@@ -267,8 +270,15 @@ class API2Scraper:
 
                 if brand_key not in brand_requests_map:
                     brand_requests_map[brand_key] = []
-                if req_id and req_id.lower() not in ("null", "none") and req_id not in brand_requests_map[brand_key]:
-                    brand_requests_map[brand_key].append(req_id)
+                    brand_display_names[brand_key] = brand_clean
+
+                if req_id and req_id.lower() not in ("null", "none"):
+                    req_to_brand_map[req_id] = brand_clean
+                    if req_id not in brand_requests_map[brand_key]:
+                        brand_requests_map[brand_key].append(req_id)
+
+        self._last_brand_display_names = brand_display_names
+        self._last_req_to_brand_map = req_to_brand_map
 
         actual_brand_count = len(brand_requests_map) if brand_requests_map else (approved_count if approved_count > 0 else 0)
 
@@ -296,6 +306,7 @@ class API2Scraper:
                 actual_brand_count: int
                 unique_brands: List[str]
                 request_id: str
+                brand_name: str
                 brand_owner: str
                 document_type: str
                 brand_website_link: str
@@ -309,14 +320,19 @@ class API2Scraper:
             approved_count=approved_count,
         )
 
+        brand_display_names = getattr(self, "_last_brand_display_names", {})
+        req_to_brand_map = getattr(self, "_last_req_to_brand_map", {})
+
         selected_request_id = ""
+        selected_brand_name = ""
         selected_brand_owner = ""
         selected_document_type = ""
         selected_brand_website_link = ""
         brand_is_d2c = False
 
         # Iterate sequentially over unique brands and their request IDs
-        for brand_name, req_ids in brand_requests_map.items():
+        for brand_key, req_ids in brand_requests_map.items():
+            current_brand_display = brand_display_names.get(brand_key, brand_key)
             for req_id in req_ids:
                 if not req_id:
                     continue
@@ -325,10 +341,12 @@ class API2Scraper:
                 doc_type = qna_res.get("document_type", "").strip()
                 web_link = qna_res.get("brand_website_link", "").strip()
                 b_owner = qna_res.get("brand_owner", "").strip()
+                b_name = req_to_brand_map.get(req_id, current_brand_display)
 
                 # Record first encountered details as baseline
                 if not selected_request_id:
                     selected_request_id = req_id
+                    selected_brand_name = b_name
                     selected_brand_owner = b_owner
                     selected_document_type = doc_type
                     selected_brand_website_link = web_link
@@ -343,14 +361,16 @@ class API2Scraper:
 
                 if is_doc_match or is_link_match:
                     selected_request_id = req_id
+                    selected_brand_name = b_name
                     selected_brand_owner = b_owner
                     selected_document_type = doc_type
                     selected_brand_website_link = web_link
                     brand_is_d2c = True
                     logger.info(
-                        "🎯 [D2C BRAND MATCH] Seller %s: Request ID %s qualified for D2C (DocType: '%s', Website: '%s'). Short-circuiting remaining brand checks.",
+                        "🎯 [D2C BRAND MATCH] Seller %s: Request ID %s (Brand: '%s') qualified for D2C (DocType: '%s', Website: '%s'). Short-circuiting remaining brand checks.",
                         customer_id,
                         req_id,
+                        selected_brand_name,
                         doc_type,
                         web_link,
                     )
@@ -359,12 +379,19 @@ class API2Scraper:
             if brand_is_d2c:
                 break
 
+        # Fallback for brand_name if not set during loop (e.g. no request IDs)
+        if not selected_brand_name and brand_display_names:
+            selected_brand_name = next(iter(brand_display_names.values()), "")
+        elif not selected_brand_name and brand_requests_map:
+            selected_brand_name = next(iter(brand_requests_map.keys()), "")
+
         return {
             "customer_id": str(customer_id).strip(),
             "approved_brand": approved_count,
             "actual_brand_count": actual_brand_count,
             "unique_brands": sorted(list(brand_requests_map.keys())),
             "request_id": selected_request_id,
+            "brand_name": selected_brand_name,
             "brand_owner": selected_brand_owner,
             "document_type": selected_document_type,
             "brand_website_link": selected_brand_website_link,

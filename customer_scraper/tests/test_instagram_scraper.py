@@ -90,9 +90,9 @@ class TestExcelWriter21Columns(unittest.TestCase):
     def setUp(self):
         self.writer = CSVWriter()
 
-    def test_format_customer_rows_21_columns_with_instagram(self):
-        """Tests that formatted row has exactly 21 columns and Instagram presence marks isD2C = Yes."""
-        self.assertEqual(len(CSV_COLUMNS), 21)
+    def test_format_customer_rows_22_columns_with_instagram(self):
+        """Tests that formatted row has exactly 22 columns and Instagram presence marks isD2C = Yes."""
+        self.assertEqual(len(CSV_COLUMNS), 22)
 
         data = {
             "customer_id": "c111222333444",
@@ -105,6 +105,7 @@ class TestExcelWriter21Columns(unittest.TestCase):
             "approved_brand": 1,
             "actual_brand_count": 1,
             "request_id": "REQ123",
+            "brand_name": "Insta Brand",
             "brand_owner": "No",
             "document_type": "OTHER",  # Not BAL/TM
             "brand_website_link": "",   # No website link
@@ -120,13 +121,15 @@ class TestExcelWriter21Columns(unittest.TestCase):
         rows = self.writer._format_customer_rows(data, sr_no=5)
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(len(row), 21)
+        self.assertEqual(len(row), 22)
 
         self.assertEqual(row[0], 5)                                         # Sr No
         self.assertEqual(row[1], "c111222333444")                           # Customer ID
-        self.assertEqual(row[14], "https://www.instagram.com/instaseller_official/") # Instagram URL
-        self.assertEqual(row[19], "No")                                     # Unique Email
-        self.assertEqual(row[20], "Yes")                                    # isD2C (Triggered by Instagram!)
+        self.assertEqual(row[10], "REQ123")                                 # Request ID
+        self.assertEqual(row[11], "Insta Brand")                            # Brand Name
+        self.assertEqual(row[15], "https://www.instagram.com/instaseller_official/") # Instagram URL
+        self.assertEqual(row[20], "No")                                     # Unique Email
+        self.assertEqual(row[21], "Yes")                                    # isD2C (Triggered by Instagram!)
 
 
 if __name__ == "__main__":

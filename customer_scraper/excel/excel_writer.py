@@ -100,30 +100,30 @@ class CSVWriter:
                 logger.error("Failed to initialize CSV file (%s): %s", file_path, str(e))
             return
 
-        # Check if existing CSV has outdated columns (e.g. 20 instead of 21 columns)
+        # Check if existing CSV has outdated columns (e.g. missing Brand Name or Instagram URL)
         try:
             with open(file_path, "r", newline="", encoding="utf-8-sig") as f:
                 reader = list(csv.reader(f))
 
             if reader:
                 existing_header = reader[0]
-                if len(existing_header) < len(CSV_COLUMNS) or "Instagram URL" not in existing_header:
-                    logger.info("Migrating %s to 21-column schema (adding 'Instagram URL')...", file_path.name)
+                if existing_header != CSV_COLUMNS:
+                    logger.info("Migrating %s to %d-column schema...", file_path.name, len(CSV_COLUMNS))
+                    header_map = {col.strip(): i for i, col in enumerate(existing_header)}
                     migrated_rows = [CSV_COLUMNS]
                     for row in reader[1:]:
-                        if len(row) == 20:
-                            # Insert empty Instagram URL at index 14
-                            new_row = row[:14] + [""] + row[14:]
-                            migrated_rows.append(new_row)
-                        elif len(row) == len(CSV_COLUMNS):
-                            migrated_rows.append(row)
-                        else:
-                            migrated_rows.append(row)
+                        new_row = []
+                        for col_name in CSV_COLUMNS:
+                            if col_name in header_map and header_map[col_name] < len(row):
+                                new_row.append(row[header_map[col_name]])
+                            else:
+                                new_row.append("")
+                        migrated_rows.append(new_row)
 
                     with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
                         writer = csv.writer(f)
                         writer.writerows(migrated_rows)
-                    logger.info("Successfully upgraded %s with 21 columns including 'Instagram URL'.", file_path.name)
+                    logger.info("Successfully upgraded %s to schema with %d columns.", file_path.name, len(CSV_COLUMNS))
         except Exception as mig_err:
             logger.debug("Schema migration check notice for %s: %s", file_path.name, str(mig_err))
 
@@ -174,16 +174,17 @@ class CSVWriter:
                 9: 16,  # Approved Brand
                 10: 18, # Actual Brand Count
                 11: 18, # Request ID
-                12: 16, # Brand Owner
-                13: 16, # Document Type
-                14: 32, # Brand Website Link
-                15: 35, # Instagram URL
-                16: 18, # Mobile Number
-                17: 24, # Registered Mobile Number
-                18: 25, # Email ID
-                19: 28, # Registered Email ID
-                20: 14, # Unique Email
-                21: 12, # isD2C
+                12: 22, # Brand Name
+                13: 16, # Brand Owner
+                14: 16, # Document Type
+                15: 32, # Brand Website Link
+                16: 35, # Instagram URL
+                17: 18, # Mobile Number
+                18: 24, # Registered Mobile Number
+                19: 25, # Email ID
+                20: 28, # Registered Email ID
+                21: 14, # Unique Email
+                22: 12, # isD2C
             }
             for col_idx, width in col_widths.items():
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
@@ -394,6 +395,7 @@ class CSVWriter:
         approved_brand = data.get("approved_brand", "")
         actual_brand_count = data.get("actual_brand_count", "")
         request_id = data.get("request_id", "")
+        brand_name = data.get("brand_name") or data.get("brand") or data.get("brandName") or ""
         brand_owner = data.get("brand_owner", "")
         document_type = data.get("document_type", "")
         brand_website_link = data.get("brand_website_link", "")
@@ -451,6 +453,7 @@ class CSVWriter:
             approved_brand,
             actual_brand_count,
             request_id,
+            brand_name,
             brand_owner,
             document_type,
             brand_website_link,

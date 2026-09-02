@@ -121,6 +121,7 @@ CSV_COLUMNS = [
     "Approved Brand",
     "Actual Brand Count",
     "Request ID",
+    "Brand Name",
     "Brand Owner",
     "Document Type",
     "Brand Website Link",

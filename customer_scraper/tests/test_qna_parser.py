@@ -79,6 +79,7 @@ class TestQnAParser(unittest.TestCase):
         self.assertEqual(res["approved_brand"], 3)
         self.assertEqual(res["actual_brand_count"], 2)
         self.assertEqual(res["request_id"], "REQ101")
+        self.assertEqual(res["brand_name"], "BRAND_A")
         self.assertEqual(res["document_type"], "BAL")
         self.assertEqual(res["brand_owner"], "No")
         self.assertTrue(res["brand_is_d2c"])
@@ -115,18 +116,19 @@ class TestQnAParser(unittest.TestCase):
 
         res = self.scraper.get_brand_approval_details("seller_test_2")
         self.assertEqual(res["request_id"], "REQ301")
+        self.assertEqual(res["brand_name"], "COOL_BRAND")
         self.assertEqual(res["document_type"], "OTHER")
         self.assertEqual(res["brand_website_link"], "https://www.mybrandstore.in")
         self.assertTrue(res["brand_is_d2c"])
 
 
-class TestExcelWriter21Columns(unittest.TestCase):
+class TestExcelWriter22Columns(unittest.TestCase):
     def setUp(self):
         self.writer = CSVWriter()
 
-    def test_format_customer_rows_21_columns(self):
-        """Tests that formatted row has exactly 21 columns matching CSV_COLUMNS."""
-        self.assertEqual(len(CSV_COLUMNS), 21)
+    def test_format_customer_rows_22_columns(self):
+        """Tests that formatted row has exactly 22 columns matching CSV_COLUMNS."""
+        self.assertEqual(len(CSV_COLUMNS), 22)
 
         data = {
             "customer_id": "c1234567890",
@@ -139,6 +141,7 @@ class TestExcelWriter21Columns(unittest.TestCase):
             "approved_brand": 5,
             "actual_brand_count": 2,
             "request_id": "REQ999",
+            "brand_name": "Test Brand",
             "brand_owner": "Yes",
             "document_type": "TM",
             "brand_website_link": "https://brand.com",
@@ -154,7 +157,7 @@ class TestExcelWriter21Columns(unittest.TestCase):
         rows = self.writer._format_customer_rows(data, sr_no=1)
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(len(row), 21)
+        self.assertEqual(len(row), 22)
 
         # Check column values in order
         self.assertEqual(row[0], 1)                   # Sr No
@@ -168,16 +171,17 @@ class TestExcelWriter21Columns(unittest.TestCase):
         self.assertEqual(row[8], 5)                   # Approved Brand
         self.assertEqual(row[9], 2)                   # Actual Brand Count
         self.assertEqual(row[10], "REQ999")           # Request ID
-        self.assertEqual(row[11], "Yes")              # Brand Owner
-        self.assertEqual(row[12], "TM")               # Document Type
-        self.assertEqual(row[13], "https://brand.com")# Brand Website Link
-        self.assertEqual(row[14], "https://www.instagram.com/testenterprise/") # Instagram URL
-        self.assertEqual(row[15], "9876543210")       # Mobile Number
-        self.assertEqual(row[16], "9876543210")       # Registered Mobile Number
-        self.assertEqual(row[17], "info@brand.com")   # Email ID
-        self.assertEqual(row[18], "contact@brand.com")# Registered Email ID
-        self.assertEqual(row[19], "Yes")              # Unique Email
-        self.assertEqual(row[20], "Yes")              # isD2C
+        self.assertEqual(row[11], "Test Brand")       # Brand Name
+        self.assertEqual(row[12], "Yes")              # Brand Owner
+        self.assertEqual(row[13], "TM")               # Document Type
+        self.assertEqual(row[14], "https://brand.com")# Brand Website Link
+        self.assertEqual(row[15], "https://www.instagram.com/testenterprise/") # Instagram URL
+        self.assertEqual(row[16], "9876543210")       # Mobile Number
+        self.assertEqual(row[17], "9876543210")       # Registered Mobile Number
+        self.assertEqual(row[18], "info@brand.com")   # Email ID
+        self.assertEqual(row[19], "contact@brand.com")# Registered Email ID
+        self.assertEqual(row[20], "Yes")              # Unique Email
+        self.assertEqual(row[21], "Yes")              # isD2C
 
     def test_format_customer_rows_non_d2c_record(self):
         """Tests that non-D2C records are properly formatted with isD2C = 'No' and saved."""
@@ -192,6 +196,7 @@ class TestExcelWriter21Columns(unittest.TestCase):
             "approved_brand": 0,
             "actual_brand_count": 0,
             "request_id": "",
+            "brand_name": "",
             "brand_owner": "",
             "document_type": "",
             "brand_website_link": "",
@@ -207,12 +212,13 @@ class TestExcelWriter21Columns(unittest.TestCase):
         rows = self.writer._format_customer_rows(data, sr_no=2)
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(len(row), 21)
+        self.assertEqual(len(row), 22)
         self.assertEqual(row[0], 2)
         self.assertEqual(row[1], "c9876543210")
-        self.assertEqual(row[14], "")     # Instagram URL
-        self.assertEqual(row[19], "No")   # Unique Email
-        self.assertEqual(row[20], "No")   # isD2C
+        self.assertEqual(row[11], "")     # Brand Name
+        self.assertEqual(row[15], "")     # Instagram URL
+        self.assertEqual(row[20], "No")   # Unique Email
+        self.assertEqual(row[21], "No")   # isD2C
 
 
 if __name__ == "__main__":
