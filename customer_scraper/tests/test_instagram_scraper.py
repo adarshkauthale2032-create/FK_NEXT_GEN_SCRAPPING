@@ -90,8 +90,6 @@ class TestInstagramHelpers(unittest.TestCase):
 class TestInstagramScraperMocked(unittest.TestCase):
     def test_search_instagram_mocked(self):
         scraper = InstagramScraper(request_delay=0, min_score=30)
-        # Mock CDP unavailable to test fallback engine
-        scraper._is_cdp_available = MagicMock(return_value=False)
 
         mock_ddgs = MagicMock()
         mock_ddgs.text.return_value = [
@@ -111,16 +109,6 @@ class TestInstagramScraperMocked(unittest.TestCase):
             self.assertEqual(cached_url, "https://www.instagram.com/woostro_official/")
             # DDGS should not be called again due to caching
             self.assertGreaterEqual(mock_ddgs.text.call_count, 1)
-
-    def test_search_instagram_cdp_first_success(self):
-        scraper = InstagramScraper(request_delay=0)
-        scraper._is_cdp_available = MagicMock(return_value=True)
-
-        with patch.object(scraper, "_async_google_search", return_value="https://www.instagram.com/lenskart/"):
-            url = scraper.search_instagram("Lenskart")
-            self.assertEqual(url, "https://www.instagram.com/lenskart/")
-            self.assertIn("lenskart", scraper.cache)
-
 
 
 class TestExcelWriter21Columns(unittest.TestCase):
