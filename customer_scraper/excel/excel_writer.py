@@ -59,6 +59,38 @@ class CSVWriter:
         if self.excel_path:
             self._ensure_excel_file_exists(self.excel_path)
 
+        # Automatically check and migrate all output datasets to match master 23-column schema
+        self.verify_and_migrate_all_datasets()
+
+    def verify_and_migrate_all_datasets(self) -> None:
+        """
+        Scans all existing CSV and Excel files in the output directory, verifies if all
+        configured CSV_COLUMNS (including 'Instagram Followers') are present in correct order,
+        and automatically upgrades any legacy or missing columns without modifying existing data.
+        """
+        if not self.output_dir.exists():
+            return
+
+        # 1. Check and migrate CSV files
+        csv_files = sorted(list(self.output_dir.glob("*.csv")))
+        if self.csv_path and self.csv_path.exists() and self.csv_path not in csv_files:
+            csv_files.append(self.csv_path)
+
+        for csv_f in csv_files:
+            if csv_f.name.startswith("~") or ".tmp" in csv_f.name:
+                continue
+            self._ensure_csv_file_exists(csv_f)
+
+        # 2. Check and migrate Excel workbooks
+        excel_files = sorted(list(self.output_dir.glob("*.xlsx")))
+        if self.excel_path and self.excel_path.exists() and self.excel_path not in excel_files:
+            excel_files.append(self.excel_path)
+
+        for xlsx_f in excel_files:
+            if xlsx_f.name.startswith("~") or ".tmp" in xlsx_f.name:
+                continue
+            self._migrate_excel_file_if_needed(xlsx_f)
+
     def get_batch_range(self, sr_no: int) -> Tuple[int, int]:
         """
         Calculates the 1-indexed batch start and end Sr No for a given customer sequence number.
@@ -100,16 +132,17 @@ class CSVWriter:
                 logger.error("Failed to initialize CSV file (%s): %s", file_path, str(e))
             return
 
-        # Check if existing CSV has outdated columns (e.g. missing Brand Name or Instagram URL)
+        # Check if existing CSV has outdated columns (e.g. missing Brand Name, Instagram URL, or Instagram Followers)
         try:
             with open(file_path, "r", newline="", encoding="utf-8-sig") as f:
                 reader = list(csv.reader(f))
 
             if reader:
-                existing_header = reader[0]
+                existing_header = [col.strip() for col in reader[0] if col is not None]
                 if existing_header != CSV_COLUMNS:
+                    print(f"🔄 [CSV UPGRADE] Checking '{file_path.name}' ({len(existing_header)} cols -> {len(CSV_COLUMNS)} cols). Migrating columns...")
                     logger.info("Migrating %s to %d-column schema...", file_path.name, len(CSV_COLUMNS))
-                    header_map = {col.strip(): i for i, col in enumerate(existing_header)}
+                    header_map = {col: i for i, col in enumerate(existing_header)}
                     migrated_rows = [CSV_COLUMNS]
                     for row in reader[1:]:
                         new_row = []
@@ -123,9 +156,117 @@ class CSVWriter:
                     with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
                         writer = csv.writer(f)
                         writer.writerows(migrated_rows)
+                    print(f"✅ [CSV UPGRADE] Successfully upgraded '{file_path.name}' ({len(migrated_rows) - 1} records preserved).")
                     logger.info("Successfully upgraded %s to schema with %d columns.", file_path.name, len(CSV_COLUMNS))
         except Exception as mig_err:
             logger.debug("Schema migration check notice for %s: %s", file_path.name, str(mig_err))
+
+    def _migrate_excel_file_if_needed(self, file_path: Path) -> None:
+        """Checks if an existing Excel file has outdated columns and automatically migrates it."""
+        if not file_path.exists():
+            self._ensure_excel_file_exists(file_path)
+            return
+
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+            wb = openpyxl.load_workbook(file_path)
+            ws = wb.active
+            if ws.max_row < 1:
+                wb.close()
+                self._ensure_excel_file_exists(file_path)
+                return
+
+            header_cells = [cell.value for cell in ws[1]]
+            clean_headers = [str(h).strip() for h in header_cells if h is not None]
+
+            if clean_headers != CSV_COLUMNS:
+                print(f"🔄 [EXCEL UPGRADE] Checking '{file_path.name}' ({len(clean_headers)} cols -> {len(CSV_COLUMNS)} cols). Migrating columns...")
+                logger.info("Migrating Excel workbook %s to %d-column schema...", file_path.name, len(CSV_COLUMNS))
+
+                header_map = {h: i for i, h in enumerate(clean_headers) if h}
+
+                # Read all existing data rows
+                existing_data_rows = []
+                for row_idx in range(2, ws.max_row + 1):
+                    row_vals = [ws.cell(row=row_idx, column=col_idx).value for col_idx in range(1, len(clean_headers) + 1)]
+                    if any(v is not None and str(v).strip() for v in row_vals):
+                        existing_data_rows.append(row_vals)
+
+                wb.close()
+
+                # Recreate workbook with styled 23-column header and mapped data rows
+                new_wb = openpyxl.Workbook()
+                new_ws = new_wb.active
+                new_ws.title = "Scraped Data"
+
+                new_ws.append(CSV_COLUMNS)
+
+                # Header styling
+                header_fill = PatternFill(start_color="1B365D", end_color="1B365D", fill_type="solid")
+                header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+                header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                thin_border = Border(
+                    left=Side(style="thin", color="CCCCCC"),
+                    right=Side(style="thin", color="CCCCCC"),
+                    top=Side(style="thin", color="CCCCCC"),
+                    bottom=Side(style="thin", color="CCCCCC"),
+                )
+
+                for col_idx in range(1, len(CSV_COLUMNS) + 1):
+                    cell = new_ws.cell(row=1, column=col_idx)
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = header_align
+                    cell.border = thin_border
+
+                # Set column widths
+                col_widths = {
+                    1: 8, 2: 20, 3: 25, 4: 18, 5: 16, 6: 14, 7: 15, 8: 15,
+                    9: 16, 10: 18, 11: 18, 12: 22, 13: 16, 14: 16, 15: 32,
+                    16: 35, 17: 20, 18: 18, 19: 24, 20: 25, 21: 28, 22: 14, 23: 12,
+                }
+                for c_idx, width in col_widths.items():
+                    col_letter = openpyxl.utils.get_column_letter(c_idx)
+                    new_ws.column_dimensions[col_letter].width = width
+
+                # Map each existing row
+                body_font = Font(name="Calibri", size=10)
+                body_align = Alignment(vertical="center")
+                cell_border = Border(
+                    left=Side(style="thin", color="E0E0E0"),
+                    right=Side(style="thin", color="E0E0E0"),
+                    top=Side(style="thin", color="E0E0E0"),
+                    bottom=Side(style="thin", color="E0E0E0"),
+                )
+
+                for row_vals in existing_data_rows:
+                    new_row = []
+                    for col_name in CSV_COLUMNS:
+                        if col_name in header_map and header_map[col_name] < len(row_vals):
+                            val = row_vals[header_map[col_name]]
+                            new_row.append(val if val is not None else "")
+                        else:
+                            new_row.append("")
+
+                    new_ws.append(new_row)
+                    curr_r = new_ws.max_row
+                    for c_idx in range(1, len(new_row) + 1):
+                        cell = new_ws.cell(row=curr_r, column=c_idx)
+                        cell.font = body_font
+                        cell.alignment = body_align
+                        cell.border = cell_border
+
+                new_ws.freeze_panes = "A2"
+                new_wb.save(file_path)
+                new_wb.close()
+                print(f"✅ [EXCEL UPGRADE] Successfully upgraded '{file_path.name}' ({len(existing_data_rows)} records preserved).")
+                logger.info("Successfully upgraded %s to schema with %d columns.", file_path.name, len(CSV_COLUMNS))
+            else:
+                wb.close()
+        except Exception as e:
+            logger.error("Failed to migrate Excel workbook (%s): %s", file_path.name, str(e))
 
     def _ensure_excel_file_exists(self, file_path: Path) -> None:
         """Creates the target Excel workbook with styled headers if missing."""
