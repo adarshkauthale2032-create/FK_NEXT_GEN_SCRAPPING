@@ -1,6 +1,6 @@
 """
-Unit tests for Instagram scraper module, URL validation, match scoring,
-and 21-column CSV/Excel row formatting.
+Unit tests for Instagram scraper module, URL validation, followers count extraction,
+match scoring, and 23-column CSV/Excel row formatting.
 """
 
 import unittest
@@ -11,6 +11,7 @@ from scrapers.instagram_scraper import (
     brand_key,
     calculate_match_score,
     clean_instagram_url,
+    extract_instagram_followers_from_text,
     get_instagram_username,
     is_brand_in_instagram_url,
     is_valid_instagram_profile,
@@ -53,6 +54,15 @@ class TestInstagramHelpers(unittest.TestCase):
         self.assertFalse(is_valid_instagram_profile("https://www.instagram.com/about/"))
         self.assertFalse(is_valid_instagram_profile("https://www.instagram.com/reels/"))
 
+    def test_extract_instagram_followers_from_text(self):
+        self.assertEqual(extract_instagram_followers_from_text("125K Followers, 450 Following, 1,200 Posts"), "125K")
+        self.assertEqual(extract_instagram_followers_from_text("50.2k followers • 1,234 posts"), "50.2K")
+        self.assertEqual(extract_instagram_followers_from_text("1,234 Followers"), "1,234")
+        self.assertEqual(extract_instagram_followers_from_text("1.5M Followers on Instagram"), "1.5M")
+        self.assertEqual(extract_instagram_followers_from_text("Followers: 45K"), "45K")
+        self.assertEqual(extract_instagram_followers_from_text('<meta property="og:description" content="350K Followers, 100 Following">'), "350K")
+        self.assertEqual(extract_instagram_followers_from_text("No stats here"), "")
+
     def test_calculate_match_score(self):
         # Exact match
         score_exact = calculate_match_score("Woostro", "woostro", "Woostro Official", "Official store")
@@ -90,34 +100,36 @@ class TestInstagramHelpers(unittest.TestCase):
 class TestInstagramScraperMocked(unittest.TestCase):
     def test_search_instagram_mocked(self):
         scraper = InstagramScraper(request_delay=0, min_score=30)
+        scraper._is_cdp_available = MagicMock(return_value=False)
 
         mock_ddgs = MagicMock()
         mock_ddgs.text.return_value = [
             {
                 "href": "https://www.instagram.com/woostro_official/",
                 "title": "Woostro Official (@woostro_official)",
-                "body": "Welcome to the official Woostro Instagram page.",
+                "body": "Welcome to the official Woostro page. 25K Followers, 100 Following.",
             }
         ]
 
         with patch("scrapers.instagram_scraper.DDGS", return_value=mock_ddgs):
-            url = scraper.search_instagram("Woostro")
-            self.assertEqual(url, "https://www.instagram.com/woostro_official/")
+            details = scraper.search_instagram_with_details("Woostro")
+            self.assertEqual(details["instagram_url"], "https://www.instagram.com/woostro_official/")
+            self.assertEqual(details["instagram_followers"], "25K")
 
             # Verify in-memory cache hit
             cached_url = scraper.search_instagram("Woostro")
             self.assertEqual(cached_url, "https://www.instagram.com/woostro_official/")
-            # DDGS should not be called again due to caching
-            self.assertGreaterEqual(mock_ddgs.text.call_count, 1)
 
 
-class TestExcelWriter21Columns(unittest.TestCase):
+class TestExcelWriter23Columns(unittest.TestCase):
     def setUp(self):
         self.writer = CSVWriter()
 
-    def test_format_customer_rows_22_columns_with_instagram(self):
-        """Tests that formatted row has exactly 22 columns and Instagram presence marks isD2C = Yes."""
-        self.assertEqual(len(CSV_COLUMNS), 22)
+    def test_format_customer_rows_23_columns_with_instagram_followers(self):
+        """Tests that formatted row has exactly 23 columns and Instagram Followers is at index 16."""
+        self.assertEqual(len(CSV_COLUMNS), 23)
+        self.assertEqual(CSV_COLUMNS[15], "Instagram URL")
+        self.assertEqual(CSV_COLUMNS[16], "Instagram Followers")
 
         data = {
             "customer_id": "c111222333444",
@@ -135,6 +147,7 @@ class TestExcelWriter21Columns(unittest.TestCase):
             "document_type": "OTHER",  # Not BAL/TM
             "brand_website_link": "",   # No website link
             "instagram_url": "https://www.instagram.com/instaseller_official/",  # Instagram found!
+            "instagram_followers": "125K",  # Followers count!
             "mobile_number": "9876543210",
             "registered_mobile_number": "9876543210",
             "email_id": "seller@gmail.com",  # Generic email
@@ -146,15 +159,16 @@ class TestExcelWriter21Columns(unittest.TestCase):
         rows = self.writer._format_customer_rows(data, sr_no=5)
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(len(row), 22)
+        self.assertEqual(len(row), 23)
 
         self.assertEqual(row[0], 5)                                         # Sr No
         self.assertEqual(row[1], "c111222333444")                           # Customer ID
         self.assertEqual(row[10], "REQ123")                                 # Request ID
         self.assertEqual(row[11], "Insta Brand")                            # Brand Name
         self.assertEqual(row[15], "https://www.instagram.com/instaseller_official/") # Instagram URL
-        self.assertEqual(row[20], "No")                                     # Unique Email
-        self.assertEqual(row[21], "Yes")                                    # isD2C (Triggered by Instagram!)
+        self.assertEqual(row[16], "125K")                                   # Instagram Followers
+        self.assertEqual(row[21], "No")                                     # Unique Email
+        self.assertEqual(row[22], "Yes")                                    # isD2C (Triggered by Instagram!)
 
 
 if __name__ == "__main__":

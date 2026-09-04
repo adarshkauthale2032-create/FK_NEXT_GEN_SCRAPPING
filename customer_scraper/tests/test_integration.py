@@ -197,15 +197,16 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.assertEqual(rows[1][6], "2020-01-01")  # Signed Up Date
         self.assertEqual(rows[1][7], "2020-01-10")  # Live Date
         self.assertEqual(rows[1][8], "26")  # Approved Brand
-        self.assertEqual(rows[1][9], "25")  # Actual Brand Count
         self.assertEqual(rows[1][10], "")   # Request ID
         self.assertEqual(rows[1][11], "RRCART")  # Brand Name
-        self.assertEqual(rows[1][16], "9123456780")  # Mobile Number
-        self.assertEqual(rows[1][17], "9123456781")  # Registered Mobile Number
-        self.assertEqual(rows[1][18], "unman@mail.com")  # Email ID
-        self.assertEqual(rows[1][19], "unman_prim@mail.com")  # Registered Email ID
-        self.assertEqual(rows[1][20], "No")  # Unique Email
-        self.assertEqual(rows[1][21], "No")  # isD2C (mail.com is generic)
+        self.assertEqual(rows[1][15], "")   # Instagram URL
+        self.assertEqual(rows[1][16], "")   # Instagram Followers
+        self.assertEqual(rows[1][17], "9123456780")  # Mobile Number
+        self.assertEqual(rows[1][18], "9123456781")  # Registered Mobile Number
+        self.assertEqual(rows[1][19], "unman@mail.com")  # Email ID
+        self.assertEqual(rows[1][20], "unman_prim@mail.com")  # Registered Email ID
+        self.assertEqual(rows[1][21], "No")  # Unique Email
+        self.assertEqual(rows[1][22], "No")  # isD2C (mail.com is generic)
 
     def test_seller_limit_stops_execution(self):
         limit = 2

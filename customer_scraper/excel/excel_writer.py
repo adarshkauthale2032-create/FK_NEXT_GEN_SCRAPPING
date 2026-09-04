@@ -161,7 +161,7 @@ class CSVWriter:
                 cell.alignment = header_align
                 cell.border = thin_border
 
-            # Column widths
+            # Column widths (23 columns)
             col_widths = {
                 1: 8,   # Sr No
                 2: 20,  # Customer ID
@@ -179,12 +179,13 @@ class CSVWriter:
                 14: 16, # Document Type
                 15: 32, # Brand Website Link
                 16: 35, # Instagram URL
-                17: 18, # Mobile Number
-                18: 24, # Registered Mobile Number
-                19: 25, # Email ID
-                20: 28, # Registered Email ID
-                21: 14, # Unique Email
-                22: 12, # isD2C
+                17: 20, # Instagram Followers
+                18: 18, # Mobile Number
+                19: 24, # Registered Mobile Number
+                20: 25, # Email ID
+                21: 28, # Registered Email ID
+                22: 14, # Unique Email
+                23: 12, # isD2C
             }
             for col_idx, width in col_widths.items():
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
@@ -400,6 +401,7 @@ class CSVWriter:
         document_type = data.get("document_type", "")
         brand_website_link = data.get("brand_website_link", "")
         instagram_url = data.get("instagram_url") or data.get("instagram") or ""
+        instagram_followers = data.get("instagram_followers") or data.get("insta_followers") or ""
         mobile_number = data.get("mobile_number", "")
         registered_mobile = data.get("registered_mobile_number", "")
         email_id = data.get("email_id", "")
@@ -458,6 +460,7 @@ class CSVWriter:
             document_type,
             brand_website_link,
             instagram_url,
+            instagram_followers,
             mobile_number,
             registered_mobile,
             email_id,
