@@ -88,17 +88,44 @@ class CSVWriter:
         return self.output_dir / f"scraped_data_{start_sr}_to_{end_sr}.csv"
 
     def _ensure_csv_file_exists(self, file_path: Path) -> None:
-        """Creates the target CSV file with formatted UTF-8-SIG headers if missing."""
-        if file_path.exists():
-            return
+        """Creates the target CSV file with formatted UTF-8-SIG headers if missing, or upgrades headers if column count changed."""
         file_path.parent.mkdir(parents=True, exist_ok=True)
+        if not file_path.exists():
+            try:
+                with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(CSV_COLUMNS)
+                logger.debug("Initialized new CSV file at %s", file_path.name)
+            except Exception as e:
+                logger.error("Failed to initialize CSV file (%s): %s", file_path, str(e))
+            return
+
+        # Check if existing CSV has outdated columns (e.g. missing Brand Name or Instagram URL)
         try:
-            with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.writer(f)
-                writer.writerow(CSV_COLUMNS)
-            logger.debug("Initialized new CSV file at %s", file_path.name)
-        except Exception as e:
-            logger.error("Failed to initialize CSV file (%s): %s", file_path, str(e))
+            with open(file_path, "r", newline="", encoding="utf-8-sig") as f:
+                reader = list(csv.reader(f))
+
+            if reader:
+                existing_header = reader[0]
+                if existing_header != CSV_COLUMNS:
+                    logger.info("Migrating %s to %d-column schema...", file_path.name, len(CSV_COLUMNS))
+                    header_map = {col.strip(): i for i, col in enumerate(existing_header)}
+                    migrated_rows = [CSV_COLUMNS]
+                    for row in reader[1:]:
+                        new_row = []
+                        for col_name in CSV_COLUMNS:
+                            if col_name in header_map and header_map[col_name] < len(row):
+                                new_row.append(row[header_map[col_name]])
+                            else:
+                                new_row.append("")
+                        migrated_rows.append(new_row)
+
+                    with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
+                        writer = csv.writer(f)
+                        writer.writerows(migrated_rows)
+                    logger.info("Successfully upgraded %s to schema with %d columns.", file_path.name, len(CSV_COLUMNS))
+        except Exception as mig_err:
+            logger.debug("Schema migration check notice for %s: %s", file_path.name, str(mig_err))
 
     def _ensure_excel_file_exists(self, file_path: Path) -> None:
         """Creates the target Excel workbook with styled headers if missing."""
@@ -146,11 +173,18 @@ class CSVWriter:
                 8: 15,  # Live Date
                 9: 16,  # Approved Brand
                 10: 18, # Actual Brand Count
-                11: 18, # Mobile Number
-                12: 24, # Registered Mobile Number
-                13: 25, # Email ID
-                14: 28, # Registered Email ID
-                15: 12, # isD2C
+                11: 18, # Request ID
+                12: 22, # Brand Name
+                13: 16, # Brand Owner
+                14: 16, # Document Type
+                15: 32, # Brand Website Link
+                16: 35, # Instagram URL
+                17: 18, # Mobile Number
+                18: 24, # Registered Mobile Number
+                19: 25, # Email ID
+                20: 28, # Registered Email ID
+                21: 14, # Unique Email
+                22: 12, # isD2C
             }
             for col_idx, width in col_widths.items():
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
@@ -214,7 +248,12 @@ class CSVWriter:
                     writer = csv.writer(f)
                     for row in rows:
                         writer.writerow(row)
-                logger.debug("Successfully appended %d row(s) to %s", len(rows), csv_file.name)
+                    f.flush()
+                    try:
+                        os.fsync(f.fileno())
+                    except Exception:
+                        pass
+                logger.debug("Successfully appended %d row(s) to %s (flushed to disk)", len(rows), csv_file.name)
                 return True
             except (PermissionError, OSError):
                 retries += 1
@@ -355,23 +394,52 @@ class CSVWriter:
         live_date = self._clean_date_str(data.get("live_date", ""))
         approved_brand = data.get("approved_brand", "")
         actual_brand_count = data.get("actual_brand_count", "")
+        request_id = data.get("request_id", "")
+        brand_name = data.get("brand_name") or data.get("brand") or data.get("brandName") or ""
+        brand_owner = data.get("brand_owner", "")
+        document_type = data.get("document_type", "")
+        brand_website_link = data.get("brand_website_link", "")
+        instagram_url = data.get("instagram_url") or data.get("instagram") or ""
         mobile_number = data.get("mobile_number", "")
         registered_mobile = data.get("registered_mobile_number", "")
         email_id = data.get("email_id", "")
         registered_email = data.get("registered_email_id", "")
+        unique_email = data.get("unique_email") or data.get("unique_email_yes_no", "")
 
-        # Determine isD2C ('Yes' or 'No') based on unique email domains
-        is_d2c = data.get("isD2C") or data.get("is_d2c")
-        if not is_d2c:
-            is_d2c = "No"
+        # Determine Unique Email ('Yes' or 'No')
+        if not unique_email:
+            unique_email = "No"
             for em in (email_id, registered_email):
                 if em:
                     em_str = str(em).strip().lower()
                     if "@" in em_str:
                         dom = em_str.split("@")[-1].strip()
                         if dom and "." in dom and dom not in GENERIC_EMAIL_DOMAINS and dom not in ("null", "none"):
-                            is_d2c = "Yes"
+                            unique_email = "Yes"
                             break
+
+        # Determine isD2C ('Yes' or 'No') based on 4 criteria:
+        # 1. Unique Email == 'Yes'
+        # 2. Document Type is BAL or TM
+        # 3. Valid Brand Website Link
+        # 4. Instagram Profile Found
+        is_d2c = data.get("isD2C") or data.get("is_d2c")
+        if not is_d2c:
+            doc_type_clean = str(document_type).strip().upper()
+            web_link_clean = str(brand_website_link).strip()
+            is_valid_link = bool(
+                web_link_clean
+                and web_link_clean.lower() not in ("null", "none", "n/a", "na", "")
+                and ("." in web_link_clean or "http" in web_link_clean.lower())
+            )
+            is_insta_found = bool(
+                instagram_url
+                and str(instagram_url).strip().lower() not in ("null", "none", "n/a", "na", "")
+            )
+            if unique_email == "Yes" or doc_type_clean in ("BAL", "TM") or is_valid_link or is_insta_found:
+                is_d2c = "Yes"
+            else:
+                is_d2c = "No"
 
         return [[
             sr_no,
@@ -384,10 +452,17 @@ class CSVWriter:
             live_date,
             approved_brand,
             actual_brand_count,
+            request_id,
+            brand_name,
+            brand_owner,
+            document_type,
+            brand_website_link,
+            instagram_url,
             mobile_number,
             registered_mobile,
             email_id,
             registered_email,
+            unique_email,
             is_d2c,
         ]]
 
@@ -412,14 +487,16 @@ class CSVWriter:
 
     def flush_pending(self) -> bool:
         """
-        Writes all buffered pending records to their target CSV and Excel files.
+        Writes all buffered pending records to both target CSV and Excel (.xlsx) files.
         """
         pending = self.load_pending_records()
         if not pending:
             return True
 
-        # Group rows by target CSV batch files based on sr_no
-        batches: Dict[Path, List[List[Any]]] = {}
+        # Group rows by target batch files based on sr_no
+        csv_batches: Dict[Path, List[List[Any]]] = {}
+        excel_batches: Dict[Path, List[List[Any]]] = {}
+
         for item in pending:
             item_sr = item.get("sr_no", 1)
             item_data = item.get("data", {})
@@ -429,17 +506,26 @@ class CSVWriter:
                 sr_int = 1
 
             target_csv = self.get_csv_path_for_sr(sr_int)
+            target_excel = self.get_excel_path_for_sr(sr_int)
 
-            if target_csv not in batches:
-                batches[target_csv] = []
+            if target_csv not in csv_batches:
+                csv_batches[target_csv] = []
+            if target_excel not in excel_batches:
+                excel_batches[target_excel] = []
 
             rows = self._format_customer_rows(item_data, item_sr)
-            batches[target_csv].extend(rows)
+            csv_batches[target_csv].extend(rows)
+            excel_batches[target_excel].extend(rows)
 
         all_saved = True
-        for target_csv, rows in batches.items():
+        for target_csv, rows in csv_batches.items():
             csv_ok = self._append_rows_to_csv_with_retry(target_csv, rows)
             if not csv_ok:
+                all_saved = False
+
+        for target_excel, rows in excel_batches.items():
+            excel_ok = self._append_rows_to_excel_with_retry(target_excel, rows)
+            if not excel_ok:
                 all_saved = False
 
         if all_saved:
@@ -518,6 +604,35 @@ class CSVWriter:
     def get_current_customer_count(self) -> int:
         """Returns total count of unique completed customer IDs."""
         return len(self.get_completed_customer_ids())
+
+    def get_last_completed_customer_id(self) -> str:
+        """Returns the customer ID from the very last row written across all output CSV files."""
+        csv_files = sorted(list(self.output_dir.glob("scraped_data_*.csv")), key=lambda p: p.stat().st_mtime)
+        if not csv_files and self.csv_path and self.csv_path.exists():
+            csv_files = [self.csv_path]
+
+        last_id = ""
+        for csv_f in reversed(csv_files):
+            try:
+                with open(csv_f, "r", newline="", encoding="utf-8-sig") as f:
+                    reader = csv.reader(f)
+                    header = next(reader, None)
+                    cust_col_idx = 1
+                    if header:
+                        for i, col in enumerate(header):
+                            if col.strip().lower() in ("customer id", "customer_id", "seller id", "seller_id"):
+                                cust_col_idx = i
+                                break
+                    for row in reader:
+                        if row and len(row) > cust_col_idx:
+                            c_id = str(row[cust_col_idx]).strip()
+                            if c_id and c_id.lower() not in ("customer id", "customer_id", "none", "null", ""):
+                                last_id = c_id
+                if last_id:
+                    return last_id
+            except Exception:
+                pass
+        return last_id
 
 
 # Compatibility Aliases

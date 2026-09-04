@@ -100,11 +100,14 @@ class TestCSVWriter(unittest.TestCase):
         self.assertEqual(row_vals[7], "2022-03-20")
         self.assertEqual(row_vals[8], "26")
         self.assertEqual(row_vals[9], "15")
-        self.assertEqual(row_vals[10], "9876543210")
-        self.assertEqual(row_vals[11], "9876543211")
-        self.assertEqual(row_vals[12], "contact@retail.com")
-        self.assertEqual(row_vals[13], "reg@retail.com")
-        self.assertEqual(row_vals[14], "Yes")  # retail.com is custom domain -> isD2C = Yes
+        self.assertEqual(row_vals[10], "")            # Request ID
+        self.assertEqual(row_vals[11], "")            # Brand Name
+        self.assertEqual(row_vals[16], "9876543210")  # Mobile Number
+        self.assertEqual(row_vals[17], "9876543211")  # Registered Mobile Number
+        self.assertEqual(row_vals[18], "contact@retail.com")
+        self.assertEqual(row_vals[19], "reg@retail.com")
+        self.assertEqual(row_vals[20], "Yes")         # Unique Email
+        self.assertEqual(row_vals[21], "Yes")         # retail.com is custom domain -> isD2C = Yes
 
     def test_get_completed_customer_ids(self):
         cust1 = {"customer_id": "ID_AAA", "support_manager": "Yes"}

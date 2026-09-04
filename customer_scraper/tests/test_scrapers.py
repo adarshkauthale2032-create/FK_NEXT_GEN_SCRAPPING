@@ -148,8 +148,9 @@ class TestAPI2Scraper(unittest.TestCase):
         self.assertEqual(res["approved_brand"], 4)
         # "BRAND", "Brand", "bRAND" deduplicate to 1, plus "OTHER_BRAND" = 2 unique approved brands
         self.assertEqual(res["actual_brand_count"], 2)
-        self.assertIn("brand", res["unique_brands"])
-        self.assertIn("other_brand", res["unique_brands"])
+        self.assertEqual(res["brand_name"], "BRAND")
+        self.assertTrue("BRAND" in res["unique_brands"] or "brand" in res["unique_brands"])
+        self.assertTrue("OTHER_BRAND" in res["unique_brands"] or "other_brand" in res["unique_brands"])
 
     def test_approved_7_with_all_unique_brands_gives_7(self):
         self.mock_client.get.return_value = {"ALL": 10, "APPROVED": 7}

@@ -25,6 +25,7 @@ from config.settings import (
     BASE_URL,
     CDP_PORT,
     CDP_URL,
+    DEFAULT_SELLER_ID,
     REFRESH_INTERVAL,
     SELLER_APPROVALS_URL,
     SELLER_INFO_URL,
@@ -33,7 +34,7 @@ from config.settings import (
 
 logger = logging.getLogger("customer_scraper")
 
-DEFAULT_FALLBACK_SELLER_ID = "8dcb3a6a73394ba4"
+DEFAULT_FALLBACK_SELLER_ID = DEFAULT_SELLER_ID or "218598a2b41c4bcd"
 
 
 def is_cdp_available(cdp_url: str = CDP_URL) -> bool:
@@ -109,27 +110,29 @@ class PlaywrightSessionHandler:
         target_url = initial_url or SELLER_INFO_URL.format(seller_id=DEFAULT_FALLBACK_SELLER_ID)
         logger.info("Chrome CDP not detected on %s. Attempting to launch Chrome...", self.cdp_url)
 
-        # Standard Chrome launch commands
-        launch_cmds = [
-            [
-                "chrome.exe",
-                f"--remote-debugging-port={CDP_PORT}",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--start-maximized",
-                target_url,
-            ],
-            [
-                "chrome",
-                f"--remote-debugging-port={CDP_PORT}",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--start-maximized",
-                target_url,
-            ],
+        # Standard Chrome launch candidates on Windows and POSIX
+        possible_chrome_paths = [
+            "chrome.exe",
+            "chrome",
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe"),
         ]
 
-        for cmd in launch_cmds:
+        launched = False
+        for chrome_bin in possible_chrome_paths:
+            if not chrome_bin:
+                continue
+            cmd = [
+                chrome_bin,
+                f"--remote-debugging-port={CDP_PORT}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--start-maximized",
+                target_url,
+            ]
             try:
                 if sys.platform == "win32":
                     subprocess.Popen(
@@ -138,15 +141,19 @@ class PlaywrightSessionHandler:
                     )
                 else:
                     subprocess.Popen(cmd, start_new_session=True)
+                launched = True
                 break
             except Exception as e:
-                logger.debug("Failed to launch Chrome with %s: %s", cmd[0], str(e))
+                logger.debug("Failed to launch Chrome via %s: %s", chrome_bin, str(e))
 
-        # Wait up to 10 seconds for CDP endpoint to respond
-        for _ in range(20):
+        if not launched:
+            logger.warning("Could not automatically launch Chrome binary.")
+
+        # Wait up to 6 seconds for CDP endpoint to respond
+        for _ in range(12):
             time.sleep(0.5)
             if self.is_browser_open():
-                logger.info("Chrome successfully launched and listening on CDP %s", self.cdp_url)
+                logger.info("Chrome successfully connected and listening on CDP %s", self.cdp_url)
                 return True
 
         return False
@@ -154,6 +161,7 @@ class PlaywrightSessionHandler:
     async def _async_refresh_and_extract_session(
         self,
         seller_id: Optional[str] = None,
+        target_api: str = "all",
     ) -> Optional[Dict[str, Any]]:
         """
         Connects over CDP, refreshes the dynamic seller page, intercepts
@@ -169,15 +177,23 @@ class PlaywrightSessionHandler:
         target_info_url = SELLER_INFO_URL.format(seller_id=active_seller_id)
         target_approvals_url = SELLER_APPROVALS_URL.format(seller_id=active_seller_id)
 
-        captured_headers: Dict[str, str] = get_default_headers()
-        captured_cookies: Dict[str, str] = {}
+        # If refreshing only API 2, preserve existing valid Tab 1 session data
+        existing_session = self.read_current_session_file() if target_api == "api2" else {"cookies": {}, "headers": {}}
+        existing_cookies = existing_session.get("cookies", {})
+        existing_headers = existing_session.get("headers", {})
+
+        captured_headers: Dict[str, str] = {**get_default_headers(), **existing_headers}
+        captured_cookies: Dict[str, str] = {**existing_cookies}
         csrf_token_found: Optional[str] = None
 
-        logger.info("[SESSION] Connecting to Chrome over CDP (%s)...", self.cdp_url)
+        logger.info("[SESSION] Connecting to Chrome over CDP (%s) for target: %s...", self.cdp_url, target_api.upper())
 
         async with async_playwright() as p:
             try:
-                browser = await p.chromium.connect_over_cdp(self.cdp_url)
+                browser = await asyncio.wait_for(p.chromium.connect_over_cdp(self.cdp_url), timeout=8.0)
+            except asyncio.TimeoutError:
+                logger.error("[SESSION] Timeout connecting to Chrome CDP on %s (8s)", self.cdp_url)
+                return None
             except Exception as e:
                 logger.error("[SESSION] Could not connect to Chrome CDP (%s): %s", self.cdp_url, str(e))
                 return None
@@ -231,75 +247,125 @@ class PlaywrightSessionHandler:
 
             context.on("request", handle_request)
 
-            # ------------------------------------------------------------
-            # Step 1: Detect Open Tab 1 (Seller Info)
-            # ------------------------------------------------------------
             tab_info = None
 
-            for page in context.pages:
-                try:
-                    p_url = page.url.lower()
-                    if "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
-                        if tab_info is None and "dashboard/settings" not in p_url and "sellerdashboard" not in p_url:
-                            tab_info = page
-                except Exception:
-                    pass
+            # ------------------------------------------------------------
+            # Step 1: Manage Flipkart Seller Portal Tab (or force reopen clean tab)
+            # ------------------------------------------------------------
+            if force_new_tab:
+                logger.info("[SESSION] Force new tab requested: Closing existing Flipkart tabs and opening a fresh tab...")
+                old_portal_tabs = [
+                    p for p in context.pages
+                    if "seller-support.fkcloud.it" in p.url.lower() or "fkcloud.it" in p.url.lower()
+                ]
 
-            # ------------------------------------------------------------
-            # Step 2: Keep / Refresh Tab 1 (Seller Info)
-            # ------------------------------------------------------------
-            if tab_info is None:
-                logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening: %s", target_info_url)
+                # 1. Open new tab first so browser context always remains active
                 try:
                     tab_info = await context.new_page()
-                    await tab_info.goto(target_info_url, timeout=12000, wait_until="domcontentloaded")
-                except Exception as ex1:
-                    logger.debug("[SESSION] Tab 1 open notice: %s", str(ex1))
+                except Exception as ex_np:
+                    logger.debug("[SESSION] Error creating new page: %s", str(ex_np))
+                    tab_info = context.pages[0] if context.pages else None
+
+                # 2. Close old portal tabs
+                for old_p in old_portal_tabs:
+                    if old_p != tab_info:
+                        try:
+                            await old_p.close()
+                        except Exception:
+                            pass
+
+                # 3. Navigate new tab to portal URL
+                if tab_info:
+                    logger.info("[SESSION] Navigating fresh tab to %s...", target_info_url)
+                    try:
+                        await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=12.0)
+                    except Exception as ex_goto:
+                        logger.debug("[SESSION] Fresh tab goto notice: %s", str(ex_goto))
             else:
-                logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Triggering reload...", tab_info.url)
-                try:
-                    await tab_info.evaluate("() => { try { window.location.reload(); } catch(e){} }")
-                except Exception as ex1:
-                    logger.debug("[SESSION] Tab 1 reload notice: %s", str(ex1))
+                # Normal mode: find and reload existing tab or open if not found
+                for page in context.pages:
+                    try:
+                        p_url = page.url.lower()
+                        if "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
+                            tab_info = page
+                            break
+                    except Exception:
+                        pass
 
-            await asyncio.sleep(1.0)
+                if tab_info is None:
+                    logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening: %s", target_info_url)
+                    try:
+                        tab_info = await context.new_page()
+                        await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=10.0)
+                    except Exception as ex1:
+                        logger.debug("[SESSION] Tab 1 open notice: %s", str(ex1))
+                else:
+                    logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Reloading...", tab_info.url)
+                    try:
+                        await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=8.0)
+                    except Exception:
+                        try:
+                            await asyncio.wait_for(tab_info.reload(wait_until="domcontentloaded"), timeout=8.0)
+                        except Exception as ex1:
+                            logger.debug("[SESSION] Tab 1 reload notice: %s", str(ex1))
+
+            # Wait up to 3.5 seconds for background SPA API calls to fire or until CSRF is captured
+            for _ in range(18):
+                if csrf_token_found and "connect.sid" in captured_cookies:
+                    break
+                await asyncio.sleep(0.2)
 
             # ------------------------------------------------------------
-            # Step 3: ALWAYS open Tab 2 (Dashboard Settings) in a brand NEW tab
+            # Step 2: Extract All Live Cookies for fkcloud.it domain
             # ------------------------------------------------------------
-            logger.info("[SESSION] Opening Tab 2 (Dashboard Settings) in a brand new tab: %s", target_approvals_url)
             try:
-                tab_approvals = await context.new_page()
-                await tab_approvals.goto(target_approvals_url, timeout=12000, wait_until="domcontentloaded")
-            except Exception as ex2:
-                logger.debug("[SESSION] Tab 2 open notice: %s", str(ex2))
+                browser_cookies = await context.cookies([
+                    "https://suv-flipkart.seller-support.fkcloud.it",
+                    "https://fkcloud.it",
+                    "https://seller.flipkart.com",
+                ])
 
-            # Wait for background API requests to fire on the new tab
-            await asyncio.sleep(2.5)
+                for c in browser_cookies:
+                    c_name = c.get("name")
+                    c_val = c.get("value")
+                    if c_name and c_val is not None:
+                        captured_cookies[c_name] = c_val
+            except Exception as ex_ck:
+                logger.debug("[SESSION] Context cookies error: %s", str(ex_ck))
 
-            # ------------------------------------------------------------
-            # Step 4: Extract All Cookies for fkcloud.it domain
-            # ------------------------------------------------------------
-            browser_cookies = await context.cookies([
-                "https://suv-flipkart.seller-support.fkcloud.it",
-                "https://fkcloud.it",
-                "https://seller.flipkart.com",
-            ])
+            # Also extract document.cookie directly from active page DOM
+            if tab_info:
+                try:
+                    dom_cookies = await tab_info.evaluate("() => document.cookie")
+                    if dom_cookies:
+                        for item in dom_cookies.split(";"):
+                            if "=" in item:
+                                ck, cv = item.strip().split("=", 1)
+                                if ck.strip() and cv.strip():
+                                    captured_cookies[ck.strip()] = cv.strip()
+                except Exception as ex_dom:
+                    logger.debug("[SESSION] DOM cookies error: %s", str(ex_dom))
 
-            for c in browser_cookies:
-                c_name = c.get("name")
-                c_val = c.get("value")
-                if c_name and c_val is not None:
-                    captured_cookies[c_name] = c_val
-
-            # If CSRF token is in cookies (XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h), ensure header is updated
+            # Resolve CSRF token from cookies or headers (ensuring both are populated)
+            csrf_token_val = None
             if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in captured_cookies:
-                csrf_val = captured_cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
-                captured_headers["FK-CSRF-TOKEN"] = csrf_val
-                captured_headers["fk-csrf-token"] = csrf_val
+                csrf_token_val = captured_cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
+            else:
+                for ck, cv in captured_cookies.items():
+                    if ck.lower() == "xyz7pq9rs2t1uv8wa3bc6de4fg0h" or "csrf" in ck.lower():
+                        csrf_token_val = cv
+                        break
+
+            if not csrf_token_val:
+                csrf_token_val = captured_headers.get("FK-CSRF-TOKEN") or captured_headers.get("fk-csrf-token")
+
+            if csrf_token_val:
+                captured_headers["FK-CSRF-TOKEN"] = csrf_token_val
+                captured_headers["fk-csrf-token"] = csrf_token_val
+                captured_cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"] = csrf_token_val
 
             # Read user-agent from page evaluation if not intercepted
-            active_tab = tab_approvals or tab_info
+            active_tab = tab_info
             if active_tab:
                 try:
                     ua = await active_tab.evaluate("() => navigator.userAgent")
@@ -324,7 +390,7 @@ class PlaywrightSessionHandler:
 
             print()
             print("=" * 70)
-            print("[SESSION] session.json UPDATED WITH FRESH TOKENS")
+            print(f"[SESSION] session.json UPDATED (Target: {target_api.upper()})")
             print(f"[SESSION] File:    {self.session_file.resolve()}")
             print(f"[SESSION] Seller:  {active_seller_id}")
             print(f"[SESSION] Cookies: {len(captured_cookies)} captured")
@@ -351,9 +417,15 @@ class PlaywrightSessionHandler:
                 logger.debug("Failed to read %s: %s", self.session_file, str(e))
         return {"cookies": {}, "headers": {}}
 
-    def refresh_and_extract_session(self, seller_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def refresh_and_extract_session(
+        self,
+        seller_id: Optional[str] = None,
+        target_api: str = "all",
+        force_new_tab: bool = False,
+    ) -> Optional[Dict[str, Any]]:
         """
         Synchronous entry point to refresh Flipkart browser page and extract updated session.
+        If force_new_tab is True, closes existing Flipkart portal tabs and opens a fresh tab.
         """
         if not self.is_browser_open():
             launched = self.launch_chrome_if_needed(
@@ -363,7 +435,13 @@ class PlaywrightSessionHandler:
                 logger.error("Chrome is not running on port %d and could not be started.", CDP_PORT)
                 return None
 
-        return asyncio.run(self._async_refresh_and_extract_session(seller_id=seller_id))
+        return asyncio.run(
+            self._async_refresh_and_extract_session(
+                seller_id=seller_id,
+                target_api=target_api,
+                force_new_tab=force_new_tab,
+            )
+        )
 
 
 if __name__ == "__main__":

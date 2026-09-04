@@ -31,8 +31,10 @@ def resolve_input_file() -> Path:
 INPUT_FILE_PATH = resolve_input_file()
 INPUT_EXCEL_PATH = INPUT_DIR / "input.xlsx"
 INPUT_TXT_PATH = INPUT_DIR / "input.txt"
-INPUT_SHEET_NAME = "Input Sheet"
-INPUT_COLUMN_NAME = "seller_id"
+INPUT_SHEET_NAMES = ["Merged Data 1", "Merged Data 2", "Merged Data 3"]
+INPUT_SHEET_NAME = "Merged Data 1"
+INPUT_COLUMN_NAMES = ["Seller ID", "seller_id", "SellerID", "Customer ID", "customer_id", "seller_account_id"]
+INPUT_COLUMN_NAME = "Seller ID"
 OUTPUT_CSV_PATH = OUTPUT_DIR / "scraped_data.csv"
 OUTPUT_EXCEL_PATH = OUTPUT_DIR / "scraped_data.xlsx"
 PROGRESS_FILE_PATH = OUTPUT_DIR / "progress.json"
@@ -55,6 +57,8 @@ CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
 REFRESH_INTERVAL = 600
 
 # Dynamic Portal URLs
+DEFAULT_SELLER_ID = "218598a2b41c4bcd"
+DEFAULT_FALLBACK_SELLER_ID = DEFAULT_SELLER_ID
 SELLER_INFO_URL = "https://suv-flipkart.seller-support.fkcloud.it/#app/seller/{seller_id}/info"
 SELLER_SETTINGS_URL = "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={seller_id}#dashboard/settings"
 SELLER_APPROVALS_URL = SELLER_SETTINGS_URL
@@ -66,18 +70,19 @@ API2_REQUESTS_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2?seller
 API2_ENDPOINT = API2_REQUESTS_ENDPOINT  # Compatibility alias
 API3_ENDPOINT = "/getSellerContacts?sellerId={customer_id}"
 API_APPROVALS_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2?sellerId={customer_id}"
+API_QUESTIONS_ENDPOINT = "/sellerDashboard/napi/qnaStore/questionsV2?processId={request_id}&sellerId={customer_id}"
 
 # Scraping & Business Rules
 CHUNK_SIZE = 10000  # Number of sellers per output CSV batch file (e.g. 1-10000, 10001-20000, etc.)
 DEFAULT_SCRAPE_LIMIT = 10000  # Default number of sellers to scrape in this run
 
 # HTTP & Retry Settings
-CONNECT_TIMEOUT = 10  # seconds to establish TCP connection
-READ_TIMEOUT = 25  # seconds to wait for server response
+CONNECT_TIMEOUT = 8  # seconds to establish TCP connection
+READ_TIMEOUT = 15  # seconds to wait for server response
 REQUEST_TIMEOUT = (CONNECT_TIMEOUT, READ_TIMEOUT)  # (connect, read) tuple
 MAX_REQUEST_RETRIES = 3  # retry attempts for transient network/API errors
 BACKOFF_FACTOR = 2  # exponential backoff multiplier in seconds
-MAX_AUTH_RETRIES = 2  # retry attempts after session refresh
+MAX_AUTH_RETRIES = 3  # retry attempts after session refresh (max 3 times)
 
 # CSV / File Lock & Retry Settings
 CSV_RETRY_INTERVAL = 3  # seconds between retries when file is locked
@@ -115,10 +120,17 @@ CSV_COLUMNS = [
     "Live Date",
     "Approved Brand",
     "Actual Brand Count",
+    "Request ID",
+    "Brand Name",
+    "Brand Owner",
+    "Document Type",
+    "Brand Website Link",
+    "Instagram URL",
     "Mobile Number",
     "Registered Mobile Number",
     "Email ID",
     "Registered Email ID",
+    "Unique Email",
     "isD2C",
 ]
 EXCEL_COLUMNS = CSV_COLUMNS  # Backward compatibility alias
