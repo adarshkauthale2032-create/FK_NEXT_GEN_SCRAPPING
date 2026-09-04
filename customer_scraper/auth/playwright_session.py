@@ -162,6 +162,7 @@ class PlaywrightSessionHandler:
         self,
         seller_id: Optional[str] = None,
         target_api: str = "all",
+        force_new_tab: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """
         Connects over CDP, refreshes the dynamic seller page, intercepts
