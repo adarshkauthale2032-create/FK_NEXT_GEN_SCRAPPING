@@ -212,14 +212,14 @@ class APIClient:
                         seller_id = query_params["sellerId"][0]
 
                 target_api = "all"
-                if any(x in full_url for x in ("approval-store", "requestsV2", "sellerDashboard")):
+                if any(x in full_url for x in ("approval-store", "requestsV2", "sellerDashboard", "qnaStore", "questionsV2")):
                     target_api = "api2"
                 elif "getSellerDetails" in full_url:
                     target_api = "api1"
                 elif "getSellerContacts" in full_url or "get-locations" in full_url:
                     target_api = "api3"
 
-                refresh_target_seller = DEFAULT_SELLER_ID
+                refresh_target_seller = seller_id or DEFAULT_SELLER_ID
                 logger.info("🔄 Triggering session refresh from Chrome (Seller: %s, Target: %s, Auth attempt %d/%d)...", refresh_target_seller, target_api.upper(), auth_attempts, MAX_AUTH_RETRIES)
                 try:
                     refreshed = self.auth_manager.refresh_session(seller_id=refresh_target_seller, target_api=target_api)

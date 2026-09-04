@@ -34,7 +34,7 @@ class API2Scraper:
         endpoint = API2_COUNT_ENDPOINT.format(customer_id=customer_id)
         headers = {
             "Accept": "*/*",
-            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}",
+            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/settings",
         }
 
         logger.info("API #2 (requestsV2-count) started for customer ID: %s", customer_id)
@@ -176,7 +176,7 @@ class API2Scraper:
             "Accept": "*/*",
             "Content-Type": "application/json",
             "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
-            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}",
+            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/settings",
             "x-internal-env-type": "WEB",
             "x-requested-with": "XMLHttpRequest",
             "Sec-Fetch-Dest": "empty",
