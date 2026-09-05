@@ -17,6 +17,8 @@ from auth.playwright_session import PlaywrightSessionHandler
 logger = logging.getLogger("customer_scraper")
 
 
+import urllib.parse
+
 def parse_curl_command(curl_text: str) -> Dict[str, Any]:
     """
     Parses a copied cURL command to extract cookies, headers, and tokens.
@@ -39,6 +41,10 @@ def parse_curl_command(curl_text: str) -> Dict[str, Any]:
                     if "=" in item:
                         ck, cv = item.strip().split("=", 1)
                         cookies[ck.strip()] = cv.strip()
+            elif k.lower() == "fk-csrf-token":
+                clean_csrf = urllib.parse.unquote(v).strip()
+                headers["FK-CSRF-TOKEN"] = clean_csrf
+                headers["fk-csrf-token"] = clean_csrf
             else:
                 headers[k] = v
 
@@ -50,11 +56,14 @@ def parse_curl_command(curl_text: str) -> Dict[str, Any]:
                 ck, cv = item.strip().split("=", 1)
                 cookies[ck.strip()] = cv.strip()
 
-    # If FK-CSRF-TOKEN is in headers, also mirror lowercase
-    for k, v in list(headers.items()):
-        if k.lower() == "fk-csrf-token":
-            headers["FK-CSRF-TOKEN"] = v
-            headers["fk-csrf-token"] = v
+    # If FK-CSRF-TOKEN is not set yet, check cookies
+    if "FK-CSRF-TOKEN" not in headers:
+        for ck, cv in cookies.items():
+            if ck.lower() == "xyz7pq9rs2t1uv8wa3bc6de4fg0h" or "csrf" in ck.lower():
+                clean_csrf = urllib.parse.unquote(cv).strip()
+                headers["FK-CSRF-TOKEN"] = clean_csrf
+                headers["fk-csrf-token"] = clean_csrf
+                break
 
     return {"cookies": cookies, "headers": headers}
 

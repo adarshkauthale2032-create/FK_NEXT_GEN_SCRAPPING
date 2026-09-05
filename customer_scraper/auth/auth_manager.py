@@ -8,10 +8,11 @@ and auth expiry detection with Playwright CDP session recovery.
 import json
 import logging
 import os
+from pathlib import Path
 import sys
 import time
-from pathlib import Path
 from typing import Any, Dict, Optional
+import urllib.parse
 import requests
 
 from config.settings import BASE_URL, DEFAULT_SELLER_ID, REFRESH_INTERVAL, SESSION_CONFIG_PATH
@@ -121,6 +122,8 @@ class AuthManager:
     def get_csrf_token(self) -> Optional[str]:
         """
         Finds and returns the active CSRF token from headers or cookies.
+        Decodes any URL-encoded entities (e.g. %2B to +, %2F to /) so that
+        the HTTP header FK-CSRF-TOKEN receives the exact raw token expected by Flipkart.
         Checks:
         1. Header 'FK-CSRF-TOKEN' or 'fk-csrf-token'
         2. Cookie 'XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h'
@@ -129,19 +132,19 @@ class AuthManager:
         # 1. Check in headers
         for k, v in self.headers.items():
             if k.lower() == "fk-csrf-token" and v and str(v).strip():
-                return str(v).strip()
+                return urllib.parse.unquote(str(v).strip())
 
         # 2. Check direct cookie key
         if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies:
             val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
             if val and str(val).strip():
-                return str(val).strip()
+                return urllib.parse.unquote(str(val).strip())
 
         # 3. Check case-insensitive cookie search
         for k, v in self.cookies.items():
             k_lower = k.lower()
             if (k_lower == "xyz7pq9rs2t1uv8wa3bc6de4fg0h" or "csrf" in k_lower) and v and str(v).strip():
-                return str(v).strip()
+                return urllib.parse.unquote(str(v).strip())
 
         return None
 
@@ -461,7 +464,8 @@ class AuthManager:
 
                     expired_terms = (
                         "unauthorized", "expired", "invalid session", "forbidden", "session",
-                        "auth", "not logged in", "session_invalid", "token expired", "invalid_token"
+                        "auth", "not logged in", "session_invalid", "token expired", "invalid_token",
+                        "ebadcsrftoken", "ebadcsrf", "out of sync", "csrftoken", "csrf"
                     )
                     if any(term in error_msg for term in expired_terms):
                         return True

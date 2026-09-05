@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 from typing import Any, Dict, Optional, Tuple
+import urllib.parse
 import urllib.request
 
 from config.settings import (
@@ -224,12 +225,13 @@ class PlaywrightSessionHandler:
                     )):
                         req_headers = await request.all_headers()
 
-                        # Extract CSRF token
+                        # Extract CSRF token (unquoting %2B, %2F etc. to raw characters)
                         for header_k, header_v in req_headers.items():
                             if header_k.lower() == "fk-csrf-token":
-                                csrf_token_found = header_v
-                                captured_headers["FK-CSRF-TOKEN"] = header_v
-                                captured_headers["fk-csrf-token"] = header_v
+                                clean_csrf = urllib.parse.unquote(str(header_v)).strip()
+                                csrf_token_found = clean_csrf
+                                captured_headers["FK-CSRF-TOKEN"] = clean_csrf
+                                captured_headers["fk-csrf-token"] = clean_csrf
                             elif header_k.lower() in (
                                 "user-agent",
                                 "sec-ch-ua",
@@ -254,29 +256,29 @@ class PlaywrightSessionHandler:
             # Step 1: Manage Flipkart Seller Portal Tabs based on target_api
             # ------------------------------------------------------------
             if target_api == "api2":
-                # Specific target: API #2 (Brand Approvals / requestsV2 on Seller Dashboard Settings page)
-                logger.info("[SESSION] Target is API #2. Looking for Seller Dashboard Settings tab (%s)...", target_approvals_url)
+                # Specific target: API #2 (Brand Approvals / requestsV2 on Seller Dashboard Settings / Track Approvals page)
+                logger.info("[SESSION] Target is API #2. Looking for Seller Dashboard Approvals tab (%s)...", target_approvals_url)
                 tab_settings = None
 
                 if not force_new_tab:
                     for page in context.pages:
                         try:
                             p_url = page.url.lower()
-                            if "sellerdashboard" in p_url or "dashboard/settings" in p_url or "approval-store" in p_url:
+                            if any(k in p_url for k in ("trackapprovalrequests", "approvalrequests", "requestsv2", "sellerdashboard", "dashboard/settings", "dashboard/listings", "approval-store")):
                                 tab_settings = page
                                 break
                         except Exception:
                             pass
 
                 if tab_settings is None:
-                    logger.info("[SESSION] Tab 2 (Seller Settings) not open. Opening new tab: %s", target_approvals_url)
+                    logger.info("[SESSION] Tab 2 (Seller Approvals) not open. Opening new tab: %s", target_approvals_url)
                     try:
                         tab_settings = await context.new_page()
                         await asyncio.wait_for(tab_settings.goto(target_approvals_url, wait_until="domcontentloaded"), timeout=12.0)
                     except Exception as ex2:
                         logger.debug("[SESSION] Tab 2 open notice: %s", str(ex2))
                 else:
-                    logger.info("[SESSION] Found Tab 2 (Seller Settings): %s. Reloading...", tab_settings.url)
+                    logger.info("[SESSION] Found Tab 2 (Seller Approvals): %s. Reloading...", tab_settings.url)
                     try:
                         await asyncio.wait_for(tab_settings.goto(target_approvals_url, wait_until="domcontentloaded"), timeout=10.0)
                     except Exception:
@@ -325,7 +327,7 @@ class PlaywrightSessionHandler:
 
             else:
                 # Target is "all" (Full session refresh or initial start): Ensure BOTH Tab 1 and Tab 2 are active
-                logger.info("[SESSION] Target is ALL. Managing both Tab 1 (Seller Info) and Tab 2 (Seller Settings)...")
+                logger.info("[SESSION] Target is ALL. Managing both Tab 1 (Seller Info) and Tab 2 (Seller Approvals)...")
 
                 if force_new_tab:
                     logger.info("[SESSION] Force new tab requested: Closing old portal tabs and opening fresh tabs...")
@@ -355,7 +357,7 @@ class PlaywrightSessionHandler:
                             logger.debug("[SESSION] Fresh Tab 1 goto notice: %s", str(ex_goto))
                         tabs_to_extract.append(tab_info)
 
-                    # 3. Open fresh Tab 2 (Seller Settings for requestsV2)
+                    # 3. Open fresh Tab 2 (Seller Approvals for requestsV2)
                     try:
                         tab_settings = await context.new_page()
                         await asyncio.wait_for(tab_settings.goto(target_approvals_url, wait_until="domcontentloaded"), timeout=12.0)
@@ -396,26 +398,26 @@ class PlaywrightSessionHandler:
                     if tab_info:
                         tabs_to_extract.append(tab_info)
 
-                    # 2. Tab 2 (Seller Settings for requestsV2 / brand approvals)
+                    # 2. Tab 2 (Seller Approvals for requestsV2 / brand approvals)
                     tab_settings = None
                     for page in context.pages:
                         try:
                             p_url = page.url.lower()
-                            if "sellerdashboard" in p_url or "dashboard/settings" in p_url or "approval-store" in p_url:
+                            if any(k in p_url for k in ("trackapprovalrequests", "approvalrequests", "requestsv2", "sellerdashboard", "dashboard/settings", "dashboard/listings", "approval-store")):
                                 tab_settings = page
                                 break
                         except Exception:
                             pass
 
                     if tab_settings is None:
-                        logger.info("[SESSION] Tab 2 (Seller Settings) not open. Opening new tab: %s", target_approvals_url)
+                        logger.info("[SESSION] Tab 2 (Seller Approvals) not open. Opening new tab: %s", target_approvals_url)
                         try:
                             tab_settings = await context.new_page()
                             await asyncio.wait_for(tab_settings.goto(target_approvals_url, wait_until="domcontentloaded"), timeout=10.0)
                         except Exception as ex2:
                             logger.debug("[SESSION] Tab 2 open notice: %s", str(ex2))
                     else:
-                        logger.info("[SESSION] Found Tab 2 (Seller Settings): %s. Reloading...", tab_settings.url)
+                        logger.info("[SESSION] Found Tab 2 (Seller Approvals): %s. Reloading...", tab_settings.url)
                         try:
                             await asyncio.wait_for(tab_settings.goto(target_approvals_url, wait_until="domcontentloaded"), timeout=8.0)
                         except Exception:
@@ -464,9 +466,11 @@ class PlaywrightSessionHandler:
                 except Exception as ex_dom:
                     logger.debug("[SESSION] DOM cookies error: %s", str(ex_dom))
 
-            # Resolve CSRF token from cookies or headers (ensuring both are populated)
+            # Resolve CSRF token from cookies or headers (ensuring unquoted value for FK-CSRF-TOKEN)
             csrf_token_val = None
-            if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in captured_cookies:
+            if csrf_token_found:
+                csrf_token_val = csrf_token_found
+            elif "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in captured_cookies:
                 csrf_token_val = captured_cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
             else:
                 for ck, cv in captured_cookies.items():
@@ -478,9 +482,11 @@ class PlaywrightSessionHandler:
                 csrf_token_val = captured_headers.get("FK-CSRF-TOKEN") or captured_headers.get("fk-csrf-token")
 
             if csrf_token_val:
-                captured_headers["FK-CSRF-TOKEN"] = csrf_token_val
-                captured_headers["fk-csrf-token"] = csrf_token_val
-                captured_cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"] = csrf_token_val
+                clean_csrf = urllib.parse.unquote(str(csrf_token_val)).strip()
+                captured_headers["FK-CSRF-TOKEN"] = clean_csrf
+                captured_headers["fk-csrf-token"] = clean_csrf
+                if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" not in captured_cookies:
+                    captured_cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"] = clean_csrf
 
             # Read user-agent from page evaluation if not intercepted
             for active_tab in tabs_to_extract:

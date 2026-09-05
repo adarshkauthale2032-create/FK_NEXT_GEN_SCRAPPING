@@ -34,7 +34,8 @@ class API2Scraper:
         endpoint = API2_COUNT_ENDPOINT.format(customer_id=customer_id)
         headers = {
             "Accept": "*/*",
-            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/settings",
+            "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
+            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/listings/trackApprovalRequestsV2?requestState=APPROVED",
         }
 
         logger.info("API #2 (requestsV2-count) started for customer ID: %s", customer_id)
@@ -86,7 +87,8 @@ class API2Scraper:
         endpoint = API_QUESTIONS_ENDPOINT.format(request_id=clean_req_id, customer_id=customer_id)
         headers = {
             "Accept": "*/*",
-            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/settings",
+            "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
+            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/listings/trackApprovalRequestsV2?requestState=APPROVED",
             "x-internal-env-type": "WEB",
             "x-requested-with": "XMLHttpRequest",
             "Sec-Fetch-Dest": "empty",
@@ -176,7 +178,7 @@ class API2Scraper:
             "Accept": "*/*",
             "Content-Type": "application/json",
             "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
-            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/settings",
+            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/listings/trackApprovalRequestsV2?requestState=APPROVED",
             "x-internal-env-type": "WEB",
             "x-requested-with": "XMLHttpRequest",
             "Sec-Fetch-Dest": "empty",

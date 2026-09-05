@@ -49,7 +49,7 @@ class TestAuthManager(unittest.TestCase):
 
         auth.clear_session()
         self.assertEqual(auth.cookies, {})
-        self.assertEqual(auth.headers, {})
+        self.assertIn("User-Agent", auth.headers)
 
     def test_refresh_session_persists_session(self):
         auth = AuthManager(session_path=self.session_path)

@@ -79,10 +79,12 @@ class APIClient:
             # Dynamically inject freshest CSRF token from auth_manager on every request/retry
             current_csrf = self.auth_manager.get_csrf_token()
             if current_csrf:
-                req_headers["FK-CSRF-TOKEN"] = current_csrf
-                req_headers["fk-csrf-token"] = current_csrf
-                session.headers["FK-CSRF-TOKEN"] = current_csrf
-                session.headers["fk-csrf-token"] = current_csrf
+                import urllib.parse
+                clean_csrf = urllib.parse.unquote(str(current_csrf)).strip()
+                req_headers["FK-CSRF-TOKEN"] = clean_csrf
+                req_headers["fk-csrf-token"] = clean_csrf
+                session.headers["FK-CSRF-TOKEN"] = clean_csrf
+                session.headers["fk-csrf-token"] = clean_csrf
 
             # Explicitly inject freshest Cookie header directly into every outgoing request
             cookie_str = self.auth_manager.get_cookie_header_string()

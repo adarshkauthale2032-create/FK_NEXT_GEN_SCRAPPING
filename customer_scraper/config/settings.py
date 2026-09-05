@@ -61,7 +61,7 @@ DEFAULT_SELLER_ID = "218598a2b41c4bcd"
 DEFAULT_FALLBACK_SELLER_ID = DEFAULT_SELLER_ID
 SELLER_INFO_URL = "https://suv-flipkart.seller-support.fkcloud.it/#app/seller/{seller_id}/info"
 SELLER_SETTINGS_URL = "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={seller_id}#dashboard/settings"
-SELLER_APPROVALS_URL = SELLER_SETTINGS_URL
+SELLER_APPROVALS_URL = "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={seller_id}#dashboard/listings/trackApprovalRequestsV2?requestState=APPROVED"
 
 # API Endpoints
 API1_ENDPOINT = "/getSellerDetails?sellerId={customer_id}"
