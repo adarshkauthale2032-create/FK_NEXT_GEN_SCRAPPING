@@ -132,22 +132,23 @@ class ProgressTracker:
     def sync_with_csv(self, csv_ids: Set[str], last_id: Optional[str] = None) -> None:
         """
         Synchronizes state with completed IDs and last completed ID found in the CSV dataset.
+        If rows were deleted from the CSV/Excel files, synchronizes progress.json so deleted
+        records are re-scraped starting from the exact next available position.
         """
-        updated = False
-        if csv_ids:
+        if csv_ids is not None:
             before_count = len(self.completed_ids)
-            self.completed_ids.update(csv_ids)
-            if len(self.completed_ids) > before_count:
-                logger.info("Synchronized progress: found %d completed IDs in output datasets.", len(self.completed_ids))
-                updated = True
+            self.completed_ids = set(csv_ids)
+            if last_id and str(last_id).strip():
+                self.last_completed_id = str(last_id).strip()
+            elif not csv_ids:
+                self.last_completed_id = ""
 
-        if last_id and str(last_id).strip():
-            clean_last = str(last_id).strip()
-            if self.last_completed_id != clean_last:
-                self.last_completed_id = clean_last
-                updated = True
-
-        if updated:
+            if before_count != len(self.completed_ids):
+                logger.info(
+                    "Synchronized progress with CSV: %d active completed IDs (was %d).",
+                    len(self.completed_ids),
+                    before_count,
+                )
             self._save()
 
     # Backward compatibility alias
