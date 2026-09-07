@@ -631,41 +631,15 @@ def main():
                     break
 
                 except AuthExpiredError as auth_err:
-                    consecutive_auth_failures += 1
-                    logger.warning(
-                        "⚠️ [AUTH EXPIRY] Session expired while processing %s (Attempt %d/%d). Clearing expired session and auto-refreshing...",
-                        customer_id, seller_attempt, max_seller_retries
-                    )
-                    try:
-                        auth_manager.clear_session()
-                        refresh_ok = auth_manager.refresh_session(seller_id=DEFAULT_SELLER_ID)
-                        if refresh_ok and auth_manager.cookies:
-                            logger.info("✅ [AUTH RECOVERED] Successfully re-authenticated via Chrome! Continuing scraping...")
-                            consecutive_auth_failures = 0
-                            time.sleep(0.5)
-                            continue  # Automatically retry this seller attempt immediately
-                    except Exception as refresh_err:
-                        logger.error("Automatic session refresh failed: %s", str(refresh_err))
-
-                    # If multiple consecutive auth failures occur
-                    if seller_attempt >= max_seller_retries:
-                        if consecutive_auth_failures >= 3:
-                            logger.warning(
-                                "[AUTH RETRY LOOP] Multiple consecutive auth failures (%d). Backing off 5s for automated recovery...",
-                                consecutive_auth_failures
-                            )
-                            time.sleep(5)
-                            try:
-                                auth_manager.clear_session()
-                                if auth_manager.refresh_session(seller_id=DEFAULT_SELLER_ID):
-                                    consecutive_auth_failures = 0
-                                    logger.info("✅ [AUTH RECOVERED] Auto-refresh succeeded after backoff. Resuming pipeline.")
-                            except Exception as re_err:
-                                logger.error("Automated refresh retry error: %s", str(re_err))
-
-                        failed_count += 1
-                        logger.warning("Skipping customer %s after %d failed auth attempts. Continuing to next seller...", customer_id, max_seller_retries)
-                        break
+                    logger.error("❌ [FATAL SESSION EXPIRED] %s", str(auth_err))
+                    print("\n" + "=" * 80)
+                    print("❌ [SESSION EXPIRED - SCRAPING STOPPED]")
+                    print(f"   {str(auth_err)}")
+                    print(f"   All records up to Sr No {current_sr_no - 1} are safely saved.")
+                    print("   👉 Please open Chrome (CDP Port 9222), log into Flipkart Seller Portal,")
+                    print("      and restart: python main.py")
+                    print("=" * 80 + "\n")
+                    return
 
                 except APIError as api_err:
                     failed_count += 1

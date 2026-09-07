@@ -256,11 +256,41 @@ class PlaywrightSessionHandler:
             # Step 1: Manage Flipkart Seller Portal Tabs based on target_api
             # ------------------------------------------------------------
             if target_api == "api2":
-                # Specific target: API #2 (Brand Approvals / requestsV2 on Seller Dashboard Settings / Track Approvals page)
-                logger.info("[SESSION] Target is API #2. Looking for Seller Dashboard Approvals tab (%s)...", target_approvals_url)
+                # Specific target: API #2 (Brand Approvals / requestsV2 on Track Approvals page)
+                logger.info("[SESSION] Target is API #2. Managing Seller Dashboard Approvals tab (%s)...", target_approvals_url)
                 tab_settings = None
 
-                if not force_new_tab:
+                if force_new_tab:
+                    logger.info("[SESSION] Force new tab for API #2: Closing existing approvals/settings tabs and opening fresh tab...")
+                    old_settings_tabs = [
+                        p for p in context.pages
+                        if any(k in p.url.lower() for k in ("trackapprovalrequests", "approvalrequests", "requestsv2", "sellerdashboard", "dashboard/settings", "dashboard/listings", "approval-store"))
+                    ]
+                    # 1. Open fresh tab
+                    try:
+                        tab_settings = await context.new_page()
+                    except Exception as ex_np:
+                        logger.debug("[SESSION] new_page notice: %s", str(ex_np))
+                        tab_settings = context.pages[0] if context.pages else None
+
+                    # 2. Close all old API 2 tabs
+                    for old_p in old_settings_tabs:
+                        if old_p != tab_settings:
+                            try:
+                                await old_p.close()
+                            except Exception:
+                                pass
+
+                    if tab_settings:
+                        try:
+                            logger.info("[SESSION] Opening fresh Tab 2 at %s...", target_approvals_url)
+                            await asyncio.wait_for(tab_settings.goto(target_approvals_url, wait_until="domcontentloaded"), timeout=12.0)
+                        except Exception as ex2:
+                            logger.debug("[SESSION] Tab 2 fresh open notice: %s", str(ex2))
+                        tabs_to_extract.append(tab_settings)
+
+                else:
+                    # Normal refresh: Look for existing tab and reload/navigate to target_approvals_url
                     for page in context.pages:
                         try:
                             p_url = page.url.lower()
@@ -270,32 +300,57 @@ class PlaywrightSessionHandler:
                         except Exception:
                             pass
 
-                if tab_settings is None:
-                    logger.info("[SESSION] Tab 2 (Seller Approvals) not open. Opening new tab: %s", target_approvals_url)
-                    try:
-                        tab_settings = await context.new_page()
-                        await asyncio.wait_for(tab_settings.goto(target_approvals_url, wait_until="domcontentloaded"), timeout=12.0)
-                    except Exception as ex2:
-                        logger.debug("[SESSION] Tab 2 open notice: %s", str(ex2))
-                else:
-                    logger.info("[SESSION] Found Tab 2 (Seller Approvals): %s. Reloading...", tab_settings.url)
-                    try:
-                        await asyncio.wait_for(tab_settings.goto(target_approvals_url, wait_until="domcontentloaded"), timeout=10.0)
-                    except Exception:
+                    if tab_settings is None:
+                        logger.info("[SESSION] Tab 2 (Seller Approvals) not open. Opening new tab: %s", target_approvals_url)
                         try:
-                            await asyncio.wait_for(tab_settings.reload(wait_until="domcontentloaded"), timeout=10.0)
+                            tab_settings = await context.new_page()
+                            await asyncio.wait_for(tab_settings.goto(target_approvals_url, wait_until="domcontentloaded"), timeout=12.0)
                         except Exception as ex2:
-                            logger.debug("[SESSION] Tab 2 reload notice: %s", str(ex2))
+                            logger.debug("[SESSION] Tab 2 open notice: %s", str(ex2))
+                    else:
+                        logger.info("[SESSION] Found Tab 2 (Seller Approvals): %s. Refreshing page URL: %s", tab_settings.url, target_approvals_url)
+                        try:
+                            await asyncio.wait_for(tab_settings.goto(target_approvals_url, wait_until="domcontentloaded"), timeout=10.0)
+                        except Exception:
+                            try:
+                                await asyncio.wait_for(tab_settings.reload(wait_until="domcontentloaded"), timeout=10.0)
+                            except Exception as ex2:
+                                logger.debug("[SESSION] Tab 2 reload notice: %s", str(ex2))
 
-                if tab_settings:
-                    tabs_to_extract.append(tab_settings)
+                    if tab_settings:
+                        tabs_to_extract.append(tab_settings)
 
             elif target_api in ("api1", "api3"):
                 # Specific target: API #1 (Seller Details) or API #3 (Contacts) on Tab 1 (Seller Info)
-                logger.info("[SESSION] Target is %s. Looking for Seller Info tab (%s)...", target_api.upper(), target_info_url)
+                logger.info("[SESSION] Target is %s. Managing Seller Info tab (%s)...", target_api.upper(), target_info_url)
                 tab_info = None
 
-                if not force_new_tab:
+                if force_new_tab:
+                    logger.info("[SESSION] Force new tab for %s: Closing existing Seller Info tabs and opening fresh tab...", target_api.upper())
+                    old_info_tabs = [
+                        p for p in context.pages
+                        if ("#app/seller" in p.url.lower() or "/info" in p.url.lower() or "seller-support.fkcloud.it" in p.url.lower()) and "sellerdashboard" not in p.url.lower()
+                    ]
+                    try:
+                        tab_info = await context.new_page()
+                    except Exception:
+                        tab_info = context.pages[0] if context.pages else None
+
+                    for old_p in old_info_tabs:
+                        if old_p != tab_info:
+                            try:
+                                await old_p.close()
+                            except Exception:
+                                pass
+
+                    if tab_info:
+                        try:
+                            await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=12.0)
+                        except Exception as ex1:
+                            logger.debug("[SESSION] Fresh Tab 1 open notice: %s", str(ex1))
+                        tabs_to_extract.append(tab_info)
+
+                else:
                     for page in context.pages:
                         try:
                             p_url = page.url.lower()
@@ -305,25 +360,25 @@ class PlaywrightSessionHandler:
                         except Exception:
                             pass
 
-                if tab_info is None:
-                    logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening new tab: %s", target_info_url)
-                    try:
-                        tab_info = await context.new_page()
-                        await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=12.0)
-                    except Exception as ex1:
-                        logger.debug("[SESSION] Tab 1 open notice: %s", str(ex1))
-                else:
-                    logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Reloading...", tab_info.url)
-                    try:
-                        await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=10.0)
-                    except Exception:
+                    if tab_info is None:
+                        logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening new tab: %s", target_info_url)
                         try:
-                            await asyncio.wait_for(tab_info.reload(wait_until="domcontentloaded"), timeout=10.0)
+                            tab_info = await context.new_page()
+                            await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=12.0)
                         except Exception as ex1:
-                            logger.debug("[SESSION] Tab 1 reload notice: %s", str(ex1))
+                            logger.debug("[SESSION] Tab 1 open notice: %s", str(ex1))
+                    else:
+                        logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Refreshing page URL: %s", tab_info.url, target_info_url)
+                        try:
+                            await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=10.0)
+                        except Exception:
+                            try:
+                                await asyncio.wait_for(tab_info.reload(wait_until="domcontentloaded"), timeout=10.0)
+                            except Exception as ex1:
+                                logger.debug("[SESSION] Tab 1 reload notice: %s", str(ex1))
 
-                if tab_info:
-                    tabs_to_extract.append(tab_info)
+                    if tab_info:
+                        tabs_to_extract.append(tab_info)
 
             else:
                 # Target is "all" (Full session refresh or initial start): Ensure BOTH Tab 1 and Tab 2 are active

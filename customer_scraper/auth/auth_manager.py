@@ -271,15 +271,19 @@ class AuthManager:
     def refresh_session(self, seller_id: Optional[str] = None, target_api: str = "all") -> bool:
         """
         Refreshes session automatically when expired using Chrome DevTools Protocol (CDP).
-        Tries 3 times on the existing tab. If it still fails after 3 attempts, it closes the
-        existing portal tabs in Chrome and reopens a brand new clean tab to extract fresh session details.
+        Workflow:
+        1. Tries up to 3 page refreshes on the existing tab for the target API.
+        2. If session is still not valid after 3 attempts, closes the existing portal tabs in Chrome
+           and reopens a brand new clean tab to extract fresh session details.
+        3. If fresh tab reopening still fails, raises AuthExpiredError with a clear session expired message.
         """
         target_seller = str(seller_id).strip() if seller_id else DEFAULT_SELLER_ID
         logger.info("[AUTH] Automatic session refresh initiated for seller ID %s (Target: %s)...", target_seller, target_api.upper())
 
-        # Phase 1: Try extracting / refreshing on existing tab up to 3 times
+        # Phase 1: Try page refresh on existing tab up to 3 times
         max_refresh_attempts = 3
         for attempt in range(1, max_refresh_attempts + 1):
+            logger.info("[AUTH] Attempt %d/%d: Refreshing page on existing tab (Target: %s)...", attempt, max_refresh_attempts, target_api.upper())
             try:
                 session_data = self.playwright_handler.refresh_and_extract_session(
                     seller_id=target_seller,
@@ -290,32 +294,38 @@ class AuthManager:
                     new_cookies = session_data.get("cookies", {})
                     new_headers = session_data.get("headers", {})
 
-                    # 1. Update in-memory state
-                    self.cookies.update(new_cookies)
-                    self.headers.update(new_headers)
+                    # Verify that session credentials are present
+                    has_auth = any(k in new_cookies for k in ("connect.sid", "is_login", "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"))
+                    if has_auth:
+                        # 1. Update in-memory state
+                        self.cookies.update(new_cookies)
+                        self.headers.update(new_headers)
 
-                    # 2. Fresh requests.Session instance
-                    self.session = requests.Session()
-                    self.session.cookies.update(new_cookies)
-                    self.session.headers.update(new_headers)
+                        # 2. Fresh requests.Session instance
+                        self.session = requests.Session()
+                        self.session.cookies.update(new_cookies)
+                        self.session.headers.update(new_headers)
 
-                    # 3. Ensure CSRF token header
-                    if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies:
-                        csrf_val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
-                        self.headers["FK-CSRF-TOKEN"] = csrf_val
-                        self.headers["fk-csrf-token"] = csrf_val
-                        self.session.headers["FK-CSRF-TOKEN"] = csrf_val
-                        self.session.headers["fk-csrf-token"] = csrf_val
+                        # 3. Ensure decoded CSRF token header
+                        csrf_val = self.get_csrf_token()
+                        if csrf_val:
+                            self.headers["FK-CSRF-TOKEN"] = csrf_val
+                            self.headers["fk-csrf-token"] = csrf_val
+                            self.session.headers["FK-CSRF-TOKEN"] = csrf_val
+                            self.session.headers["fk-csrf-token"] = csrf_val
 
-                    # 4. Save and force overwrite session.json on disk
-                    self._save_to_file()
+                        # 4. Save and force overwrite session.json on disk
+                        self._save_to_file()
 
-                    logger.info(
-                        "[AUTH] Session successfully refreshed and persisted (%d cookies, %d headers). Automatically continuing scraping.",
-                        len(self.cookies),
-                        len(self.headers),
-                    )
-                    return True
+                        logger.info(
+                            "[AUTH] Session successfully refreshed and persisted on attempt %d (%d cookies, %d headers). Automatically continuing scraping.",
+                            attempt,
+                            len(self.cookies),
+                            len(self.headers),
+                        )
+                        return True
+                    else:
+                        logger.warning("[AUTH] Attempt %d/%d: Cookies extracted but missing auth credentials (connect.sid / CSRF). Retrying...", attempt, max_refresh_attempts)
                 else:
                     logger.warning("[AUTH] Attempt %d/%d: Session extraction returned empty cookies. Retrying in 1s...", attempt, max_refresh_attempts)
             except Exception as e:
@@ -325,11 +335,12 @@ class AuthManager:
                 time.sleep(1)
 
         # Phase 2: If still not retrieved after 3 attempts, close existing tabs and reopen a fresh tab!
-        logger.warning("⚠️ [AUTH FALLBACK] Session could not be retrieved after %d attempts. Closing existing tabs and opening a fresh tab in Chrome...", max_refresh_attempts)
-        print("\n" + "=" * 75)
-        print("⚠️ [AUTH RECOVERY] Session extraction failed on existing tab after 3 attempts.")
-        print("🔄 [CLEAN TAB RESTART] Closing existing Flipkart tabs & reopening a new tab in Chrome...")
-        print("=" * 75 + "\n")
+        logger.warning("⚠️ [AUTH FALLBACK] Session could not be retrieved after %d page refreshes on existing tab.", max_refresh_attempts)
+        print("\n" + "=" * 80)
+        print(f"⚠️ [AUTH RECOVERY - PHASE 2 (Target: {target_api.upper()})]")
+        print("   Session extraction failed on existing tab after 3 page refresh attempts.")
+        print("   🔄 Closing existing tab and opening a brand new clean tab in Chrome...")
+        print("=" * 80 + "\n")
 
         try:
             session_data = self.playwright_handler.refresh_and_extract_session(
@@ -348,24 +359,33 @@ class AuthManager:
                 self.session.cookies.update(new_cookies)
                 self.session.headers.update(new_headers)
 
-                if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in self.cookies:
-                    csrf_val = self.cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
+                csrf_val = self.get_csrf_token()
+                if csrf_val:
                     self.headers["FK-CSRF-TOKEN"] = csrf_val
                     self.headers["fk-csrf-token"] = csrf_val
                     self.session.headers["FK-CSRF-TOKEN"] = csrf_val
                     self.session.headers["fk-csrf-token"] = csrf_val
 
                 self._save_to_file()
-                print("\n" + "=" * 75)
+                print("\n" + "=" * 80)
                 print("✅ [AUTH RECOVERED] Fresh session captured from newly opened Chrome tab!")
                 print(f"   Cookies: {len(self.cookies)} | CSRF Token: {self.get_csrf_token() or 'N/A'}")
-                print("=" * 75 + "\n")
+                print("=" * 80 + "\n")
                 return True
         except Exception as e_new:
             logger.error("Fresh tab session extraction error: %s", str(e_new))
 
+        # Phase 3: All recovery steps failed -> Print error and raise AuthExpiredError to stop script
+        print("\n" + "=" * 80)
+        print(f"❌ [AUTH FATAL] Automated session recovery failed for {target_api.upper()}!")
+        print(f"   - 3 page refresh attempts on existing Chrome tab failed.")
+        print(f"   - Closing old tab and reopening fresh tab in Chrome also failed.")
+        print(f"   👉 Session has expired. Please open Chrome, log into Flipkart Seller Portal,")
+        print(f"      and restart python main.py.")
+        print("=" * 80 + "\n")
+
         raise AuthExpiredError(
-            f"Automated session refresh failed after {max_refresh_attempts} attempts and fresh tab reopening. Please ensure Chrome is logged into Flipkart Seller Portal on {self.playwright_handler.cdp_url}."
+            f"Automated session refresh failed after {max_refresh_attempts} page refreshes and fresh tab reopening for {target_api.upper()}. Please ensure Chrome is logged into Flipkart Seller Portal on {self.playwright_handler.cdp_url}."
         )
 
     def _save_to_file(self) -> None:
