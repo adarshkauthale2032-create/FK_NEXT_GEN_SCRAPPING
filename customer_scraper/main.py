@@ -438,15 +438,16 @@ def main():
     logger.info("Verifying active session status...")
     session_valid = auth_manager.ensure_valid_session(seller_id=args.seller_id)
     if not session_valid:
-        logger.warning("Initial session check failed. Attempting automated browser extraction from Chrome...")
-        try:
-            auth_success = auth_manager.refresh_session(seller_id=args.seller_id)
-            if not auth_success or not auth_manager.cookies:
-                logger.error("Authentication required to proceed. Please ensure Chrome is open with remote debugging on port 9222 and logged in.")
-                return
-        except Exception as e:
-            logger.error("Authentication error: %s", str(e))
-            return
+        logger.error("Authentication required to proceed. Chrome CDP port 9222 is unreachable or session is expired.")
+        print("\n" + "=" * 80)
+        print("❌ [EXECUTION STOPPED - AUTHENTICATION REQUIRED]")
+        print("   Could not obtain active Flipkart session from Chrome.")
+        print("   👉 Please verify:")
+        print("      1. Chrome is running with remote debugging: chrome.exe --remote-debugging-port=9222")
+        print("      2. You are logged into Flipkart Seller Portal (suv-flipkart.seller-support.fkcloud.it)")
+        print("      3. Then re-run: python main.py")
+        print("=" * 80 + "\n")
+        return
 
     api_client = APIClient(auth_manager)
     api1 = API1Scraper(api_client)

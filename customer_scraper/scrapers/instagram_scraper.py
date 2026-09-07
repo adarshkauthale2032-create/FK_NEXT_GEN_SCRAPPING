@@ -431,16 +431,31 @@ class InstagramScraper:
                     return None, ""
 
                 print(f"[INSTA CDP] Navigating search tab to Google query for '{clean_brand}'...")
+                nav_success = False
                 try:
                     await asyncio.wait_for(
                         search_tab.goto(search_url, wait_until="domcontentloaded"),
-                        timeout=7.0,
+                        timeout=6.0,
                     )
+                    nav_success = True
                 except Exception as ex_nav:
-                    print(f"[INSTA CDP] Page load note (proceeding with current DOM): {ex_nav}")
+                    print(f"[INSTA CDP] ⚠️ Existing search tab unresponsive ({ex_nav}). Closing tab and reopening fresh search tab...")
+                    try:
+                        await search_tab.close()
+                    except Exception:
+                        pass
+                    try:
+                        search_tab = await asyncio.wait_for(context.new_page(), timeout=4.0)
+                        await asyncio.wait_for(
+                            search_tab.goto(search_url, wait_until="domcontentloaded"),
+                            timeout=6.0,
+                        )
+                        nav_success = True
+                    except Exception as ex_reopen:
+                        print(f"[INSTA CDP] Fresh search tab reopen error: {ex_reopen}")
 
                 # Brief wait for elements
-                await asyncio.sleep(0.6)
+                await asyncio.sleep(0.5)
 
                 # Extract Instagram anchor links and snippet text
                 print(f"[INSTA CDP] Parsing search results for '{clean_brand}'...")

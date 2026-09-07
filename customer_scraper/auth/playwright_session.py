@@ -190,18 +190,22 @@ class PlaywrightSessionHandler:
 
         logger.info("[SESSION] Connecting to Chrome over CDP (%s) for target: %s...", self.cdp_url, target_api.upper())
 
+        # Pre-check if CDP port is open to fail fast with clear diagnostic if Chrome isn't running
+        if not is_cdp_available(self.cdp_url):
+            logger.warning("[SESSION] ⚠️ CDP port not responding on %s. Chrome might not be running with --remote-debugging-port=9222.", self.cdp_url)
+
         async with async_playwright() as p:
             try:
-                browser = await asyncio.wait_for(p.chromium.connect_over_cdp(self.cdp_url), timeout=8.0)
+                browser = await asyncio.wait_for(p.chromium.connect_over_cdp(self.cdp_url), timeout=4.0)
             except asyncio.TimeoutError:
-                logger.error("[SESSION] Timeout connecting to Chrome CDP on %s (8s)", self.cdp_url)
+                logger.error("[SESSION] ❌ Timeout connecting to Chrome CDP on %s (4s). Please verify Chrome is running with --remote-debugging-port=9222.", self.cdp_url)
                 return None
             except Exception as e:
-                logger.error("[SESSION] Could not connect to Chrome CDP (%s): %s", self.cdp_url, str(e))
+                logger.error("[SESSION] ❌ Could not connect to Chrome CDP (%s): %s", self.cdp_url, str(e))
                 return None
 
             if not browser.contexts:
-                logger.error("[SESSION] No browser contexts found in Chrome instance.")
+                logger.error("[SESSION] ❌ No browser contexts found in Chrome instance.")
                 return None
 
             context = browser.contexts[0]

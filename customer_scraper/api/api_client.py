@@ -229,10 +229,11 @@ class APIClient:
                         raise AuthExpiredError(f"Unable to extract fresh session cookies from Chrome for {target_api}.")
                     logger.info("✅ [AUTH RECOVERED] Fresh session captured! Re-executing API call: %s %s", method.upper(), full_url)
                     continue  # Re-run request with fresh session!
+                except AuthExpiredError:
+                    raise
                 except Exception as auth_err:
                     logger.error("Auth refresh failed: %s", str(auth_err))
-                    if auth_attempts >= MAX_AUTH_RETRIES:
-                        raise AuthExpiredError(f"Authentication failed: {str(auth_err)}")
+                    raise AuthExpiredError(f"Authentication failed: {str(auth_err)}")
             else:
                 logger.error("Exceeded maximum auth retry attempts (%d).", MAX_AUTH_RETRIES)
                 raise AuthExpiredError(
