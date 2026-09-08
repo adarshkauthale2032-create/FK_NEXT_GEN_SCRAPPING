@@ -172,5 +172,50 @@ class TestPlaywrightSessionHandler(unittest.TestCase):
                 mock_context.new_page.assert_called()
 
 
+    def test_async_refresh_reloads_all_available_tabs(self):
+        import asyncio
+        handler = PlaywrightSessionHandler(session_file=self.session_file)
+
+        mock_tab1 = MagicMock()
+        mock_tab1.url = "https://suv-flipkart.seller-support.fkcloud.it/#app/seller/123/info"
+        mock_tab1.goto = MagicMock(return_value=asyncio.sleep(0.01))
+        mock_tab1.evaluate = MagicMock(return_value=asyncio.sleep(0.01, result="connect.sid=sid1; XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h=csrf1"))
+
+        mock_tab2 = MagicMock()
+        mock_tab2.url = "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId=123#dashboard/listings/trackApprovalRequestsV2?requestState=APPROVED"
+        mock_tab2.goto = MagicMock(return_value=asyncio.sleep(0.01))
+        mock_tab2.evaluate = MagicMock(return_value=asyncio.sleep(0.01, result="connect.sid=sid1; XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h=csrf1"))
+
+        mock_tab3 = MagicMock()
+        mock_tab3.url = "https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId=123#dashboard/settings"
+        mock_tab3.reload = MagicMock(return_value=asyncio.sleep(0.01))
+        mock_tab3.evaluate = MagicMock(return_value=asyncio.sleep(0.01, result=""))
+
+        mock_context = MagicMock()
+        mock_context.pages = [mock_tab1, mock_tab2, mock_tab3]
+        mock_context.cookies = MagicMock(return_value=asyncio.sleep(0.01, result=[
+            {"name": "connect.sid", "value": "sid1"},
+            {"name": "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h", "value": "csrf1"},
+        ]))
+
+        mock_browser = MagicMock()
+        mock_browser.contexts = [mock_context]
+
+        mock_p = MagicMock()
+        mock_p.chromium.connect_over_cdp = MagicMock(return_value=asyncio.sleep(0.01, result=mock_browser))
+
+        with patch("auth.playwright_session.is_cdp_available", return_value=True):
+            with patch("playwright.async_api.async_playwright") as mock_pw:
+                mock_pw_instance = MagicMock()
+                mock_pw_instance.__aenter__ = MagicMock(return_value=asyncio.sleep(0.01, result=mock_p))
+                mock_pw_instance.__aexit__ = MagicMock(return_value=asyncio.sleep(0.01))
+                mock_pw.return_value = mock_pw_instance
+
+                result = asyncio.run(handler._async_refresh_and_extract_session(seller_id="123", target_api="all"))
+                self.assertIsNotNone(result)
+                # Verify tab 3 was also reloaded
+                mock_tab3.reload.assert_called()
+
+
 if __name__ == "__main__":
     unittest.main()
