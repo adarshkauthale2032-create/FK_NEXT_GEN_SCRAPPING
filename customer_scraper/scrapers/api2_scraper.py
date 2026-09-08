@@ -11,7 +11,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from api.api_client import APIClient
+from api.api_client import APIClient, NetworkConnectionError
 from auth.auth_manager import AuthExpiredError
 from config.settings import API2_COUNT_ENDPOINT, API2_REQUESTS_ENDPOINT, API_QUESTIONS_ENDPOINT
 
@@ -42,7 +42,7 @@ class API2Scraper:
 
         try:
             response_data = self.api_client.get(endpoint, headers=headers)
-        except AuthExpiredError:
+        except (AuthExpiredError, NetworkConnectionError):
             raise
         except Exception as e:
             logger.warning(
@@ -98,7 +98,7 @@ class API2Scraper:
 
         try:
             response_data = self.api_client.get(endpoint, headers=headers)
-        except AuthExpiredError:
+        except (AuthExpiredError, NetworkConnectionError):
             raise
         except Exception as e:
             logger.warning(
@@ -207,7 +207,7 @@ class API2Scraper:
 
             try:
                 response_data = self.api_client.post(endpoint, json_data=payload, headers=headers)
-            except AuthExpiredError:
+            except (AuthExpiredError, NetworkConnectionError):
                 raise
             except Exception as e:
                 logger.warning(

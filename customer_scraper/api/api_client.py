@@ -29,6 +29,11 @@ class APIError(Exception):
     pass
 
 
+class NetworkConnectionError(APIError):
+    """Raised when network or VPN connection fails to reach Flipkart internal cloud."""
+    pass
+
+
 class APIResponseError(APIError):
     """Raised when an API returns a non-200 status or unexpected payload structure."""
     def __init__(self, message: str, status_code: Optional[int] = None, response_text: Optional[str] = None):
@@ -193,7 +198,7 @@ class APIClient:
                             full_url,
                             MAX_REQUEST_RETRIES
                         )
-                        raise APIError(f"Connection to {full_url} failed ({type(net_err).__name__}). Please check your VPN/network access.")
+                        raise NetworkConnectionError(f"Connection to {full_url} failed ({type(net_err).__name__}). Please check your VPN/network access.")
                 except APIError:
                     raise
                 except Exception as ex:

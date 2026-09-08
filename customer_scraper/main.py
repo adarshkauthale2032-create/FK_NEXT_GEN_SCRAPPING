@@ -40,7 +40,7 @@ from config.settings import (
     SESSION_CONFIG_PATH,
 )
 from auth.auth_manager import AuthManager, AuthExpiredError
-from api.api_client import APIClient, APIError
+from api.api_client import APIClient, APIError, NetworkConnectionError
 from scrapers.api1_scraper import API1Scraper
 from scrapers.api2_scraper import API2Scraper
 from scrapers.api3_scraper import API3Scraper
@@ -638,6 +638,18 @@ def main():
                     print(f"   {str(auth_err)}")
                     print(f"   All records up to Sr No {current_sr_no - 1} are safely saved.")
                     print("   👉 Please open Chrome (CDP Port 9222), log into Flipkart Seller Portal,")
+                    print("      and restart: python main.py")
+                    print("=" * 80 + "\n")
+                    return
+
+                except NetworkConnectionError as net_err:
+                    logger.error("❌ [FATAL NETWORK / VPN FAILURE] %s", str(net_err))
+                    print("\n" + "=" * 80)
+                    print("❌ [NETWORK / VPN FAILURE - SCRAPING STOPPED]")
+                    print(f"   {str(net_err)}")
+                    print(f"   Failed seller / customer ID: {customer_id}")
+                    print(f"   All records up to Sr No {current_sr_no - 1} are safely saved.")
+                    print("   👉 Please verify/reconnect your VPN or internet connection to Flipkart cloud,")
                     print("      and restart: python main.py")
                     print("=" * 80 + "\n")
                     return
