@@ -7,6 +7,7 @@ validates brand presence in the Instagram URL, and extracts the Instagram follow
 """
 
 import asyncio
+import concurrent.futures
 import logging
 import re
 import time
@@ -329,8 +330,9 @@ def calculate_match_score(
 class InstagramScraper:
     """
     Scraper and matcher for discovering seller brand Instagram accounts and followers.
-    Uses Chrome DevTools Protocol (CDP: 9222) to perform Google searches in a single
-    reusable browser tab, validates the profile URL, and extracts follower counts.
+    Uses Chrome DevTools Protocol (CDP: 9222) to perform Google searches in a dedicated,
+    clean browser tab (closing any stale tabs and cleanly destroying the tab after search),
+    with an enforced thread watchdog and fast fallback to DDGS / HTML search.
     """
 
     def __init__(
@@ -367,13 +369,12 @@ class InstagramScraper:
     async def _async_google_search(self, clean_brand: str) -> Tuple[Optional[str], str]:
         """
         Connects to Chrome CDP (port 9222) and performs a Google search for the brand's
-        official Instagram handle in a SINGLE reusable browser tab (no extra tabs created).
-        Extracts both the verified Instagram profile URL and the followers count.
+        official Instagram handle by closing any old search tab, opening a clean tab,
+        extracting the Instagram URL and followers count, and cleanly closing the tab.
         """
         try:
             from playwright.async_api import async_playwright
         except ImportError:
-            print(f"[INSTA DEBUG] Playwright not installed. Skipping CDP search for '{clean_brand}'.")
             return None, ""
 
         query = f"{clean_brand} official instagram handle"
@@ -384,7 +385,7 @@ class InstagramScraper:
         try:
             async with async_playwright() as p:
                 try:
-                    browser = await asyncio.wait_for(p.chromium.connect_over_cdp(self.cdp_url), timeout=5.0)
+                    browser = await asyncio.wait_for(p.chromium.connect_over_cdp(self.cdp_url), timeout=3.5)
                 except Exception as e:
                     print(f"[INSTA CDP] ⚠️ Could not connect to Chrome CDP (port 9222): {e}")
                     return None, ""
@@ -396,142 +397,224 @@ class InstagramScraper:
                 context = browser.contexts[0]
 
                 # ------------------------------------------------------------
-                # Reuse ONE dedicated tab in Chrome (do not open new tabs per brand)
+                # 1. Close any stale search / about:blank tabs to prevent state leaks
                 # ------------------------------------------------------------
-                search_tab = None
-                for page in context.pages:
+                for page in list(context.pages):
                     try:
                         p_url = page.url.lower()
-                        if "google.com" in p_url or "about:blank" in p_url:
-                            search_tab = page
-                            break
+                        # Close old google search or about:blank tabs, NEVER close flipkart / seller portal tabs
+                        if ("google.com/search" in p_url or p_url == "about:blank") and "fkcloud" not in p_url and "flipkart" not in p_url:
+                            await asyncio.wait_for(page.close(), timeout=1.5)
                     except Exception:
                         pass
 
-                if search_tab is None:
-                    for page in context.pages:
+                # ------------------------------------------------------------
+                # 2. Open a BRAND NEW clean search tab
+                # ------------------------------------------------------------
+                search_tab = None
+                try:
+                    search_tab = await asyncio.wait_for(context.new_page(), timeout=3.0)
+                except Exception as ex_np:
+                    print(f"[INSTA CDP] ⚠️ Notice creating fresh search tab: {ex_np}")
+                    return None, ""
+
+                try:
+                    print(f"[INSTA CDP] Navigating fresh tab to Google query for '{clean_brand}'...")
+                    await asyncio.wait_for(
+                        search_tab.goto(search_url, wait_until="domcontentloaded"),
+                        timeout=5.0,
+                    )
+
+                    # Brief wait for dynamic search content
+                    await asyncio.sleep(0.4)
+
+                    # Extract Instagram anchor links and snippet text
+                    print(f"[INSTA CDP] Parsing search results for '{clean_brand}'...")
+                    links_data = []
+                    try:
+                        links_data = await asyncio.wait_for(
+                            search_tab.evaluate("""() => {
+                                const results = [];
+                                const anchors = document.querySelectorAll('a[href]');
+                                for (const a of anchors) {
+                                    const href = a.getAttribute('href') || a.href || '';
+                                    if (href.includes('instagram.com')) {
+                                        let container = a.closest('div.g') || a.closest('div[data-sokoban-container]') || a.closest('div.MjjYud') || a.parentElement?.parentElement || a;
+                                        results.push({
+                                            href: href,
+                                            text: a.innerText || '',
+                                            snippet: container ? (container.innerText || '') : '',
+                                        });
+                                    }
+                                }
+                                return results;
+                            }"""),
+                            timeout=3.0,
+                        )
+                    except Exception as ex_eval:
+                        logger.debug("[INSTA CDP] Evaluation note: %s", ex_eval)
+                        links_data = []
+
+                    # Fallback to page content regex if needed
+                    page_content = ""
+                    if not links_data:
                         try:
-                            p_url = page.url.lower()
-                            if "fkcloud.it" not in p_url and "flipkart" not in p_url:
-                                search_tab = page
-                                break
+                            page_content = await asyncio.wait_for(search_tab.content(), timeout=2.5)
+                            if page_content:
+                                found_raw_urls = re.findall(r'https?://(?:www\.)?instagram\.com/[a-zA-Z0-9._]+/?', page_content)
+                                links_data = [{"href": u, "text": "", "snippet": ""} for u in set(found_raw_urls)]
                         except Exception:
                             pass
 
-                if search_tab is None:
-                    print("[INSTA CDP] Opening dedicated search tab in Chrome...")
-                    try:
-                        search_tab = await asyncio.wait_for(context.new_page(), timeout=4.0)
-                    except Exception as ex_np:
-                        print(f"[INSTA CDP] Notice creating tab: {ex_np}")
-                        search_tab = context.pages[0] if context.pages else None
+                    print(f"[INSTA CDP] Found {len(links_data)} Instagram candidate link(s) on Google.")
 
-                if not search_tab:
-                    print("[INSTA CDP] ⚠️ No active tab available for Google search.")
+                    # Filter and validate candidate URLs
+                    for item in links_data:
+                        raw_href = item.get("href", "")
+                        formatted_url = extract_instagram_url_from_string(raw_href)
+                        if not formatted_url:
+                            continue
+
+                        username = get_instagram_username(formatted_url)
+                        if not username:
+                            continue
+
+                        # Verify brand name is contained in the Instagram URL / username
+                        matched = is_brand_in_instagram_url(clean_brand, formatted_url)
+                        print(f"   [Candidate] @{username} ({formatted_url}) -> Brand match: {'YES ✅' if matched else 'NO ❌'}")
+
+                        if matched:
+                            snippet_text = item.get("snippet", "") or item.get("text", "")
+                            followers_count = extract_instagram_followers_from_text(snippet_text)
+
+                            if not followers_count and page_content:
+                                followers_count = extract_instagram_followers_from_text(page_content)
+
+                            if not followers_count:
+                                followers_count = self.fetch_instagram_followers(formatted_url)
+
+                            print(f"[INSTA CDP] ✅ Verified match: {formatted_url} | Followers: {followers_count or 'N/A'} for '{clean_brand}'")
+                            logger.info("📸 [Google Instagram Match] Found: %s | Followers: %s (Brand: '%s')", formatted_url, followers_count or "N/A", clean_brand)
+                            return formatted_url, followers_count
+
+                    print(f"[INSTA CDP] ℹ️ No matching profile containing brand '{clean_brand}' in Google results.")
                     return None, ""
 
-                print(f"[INSTA CDP] Navigating search tab to Google query for '{clean_brand}'...")
-                nav_success = False
-                try:
-                    await asyncio.wait_for(
-                        search_tab.goto(search_url, wait_until="domcontentloaded"),
-                        timeout=6.0,
-                    )
-                    nav_success = True
-                except Exception as ex_nav:
-                    print(f"[INSTA CDP] ⚠️ Existing search tab unresponsive ({ex_nav}). Closing tab and reopening fresh search tab...")
-                    try:
-                        await search_tab.close()
-                    except Exception:
-                        pass
-                    try:
-                        search_tab = await asyncio.wait_for(context.new_page(), timeout=4.0)
-                        await asyncio.wait_for(
-                            search_tab.goto(search_url, wait_until="domcontentloaded"),
-                            timeout=6.0,
-                        )
-                        nav_success = True
-                    except Exception as ex_reopen:
-                        print(f"[INSTA CDP] Fresh search tab reopen error: {ex_reopen}")
-
-                # Brief wait for elements
-                await asyncio.sleep(0.5)
-
-                # Extract Instagram anchor links and snippet text
-                print(f"[INSTA CDP] Parsing search results for '{clean_brand}'...")
-                links_data = []
-                try:
-                    links_data = await asyncio.wait_for(
-                        search_tab.evaluate("""() => {
-                            const results = [];
-                            const anchors = document.querySelectorAll('a[href]');
-                            for (const a of anchors) {
-                                const href = a.getAttribute('href') || a.href || '';
-                                if (href.includes('instagram.com')) {
-                                    let container = a.closest('div.g') || a.closest('div[data-sokoban-container]') || a.closest('div.MjjYud') || a.parentElement?.parentElement || a;
-                                    results.push({
-                                        href: href,
-                                        text: a.innerText || '',
-                                        snippet: container.innerText || '',
-                                    });
-                                }
-                            }
-                            return results;
-                        }"""),
-                        timeout=4.0,
-                    )
-                except Exception as ex_eval:
-                    print(f"[INSTA CDP] Evaluation note: {ex_eval}")
-                    links_data = []
-
-                # Fallback to page content regex if needed
-                page_content = ""
-                if not links_data:
-                    try:
-                        page_content = await asyncio.wait_for(search_tab.content(), timeout=3.0)
-                        if page_content:
-                            found_raw_urls = re.findall(r'https?://(?:www\.)?instagram\.com/[a-zA-Z0-9._]+/?', page_content)
-                            links_data = [{"href": u, "text": "", "snippet": ""} for u in set(found_raw_urls)]
-                    except Exception:
-                        pass
-
-                print(f"[INSTA CDP] Found {len(links_data)} Instagram candidate link(s) on Google.")
-
-                # Filter and validate extracted candidate URLs
-                for item in links_data:
-                    raw_href = item.get("href", "")
-                    formatted_url = extract_instagram_url_from_string(raw_href)
-                    if not formatted_url:
-                        continue
-
-                    username = get_instagram_username(formatted_url)
-                    if not username:
-                        continue
-
-                    # Verify brand name is contained in the Instagram URL / username
-                    matched = is_brand_in_instagram_url(clean_brand, formatted_url)
-                    print(f"   [Candidate] @{username} ({formatted_url}) -> Brand match: {'YES ✅' if matched else 'NO ❌'}")
-
-                    if matched:
-                        snippet_text = item.get("snippet", "") or item.get("text", "")
-                        followers_count = extract_instagram_followers_from_text(snippet_text)
-
-                        if not followers_count and page_content:
-                            followers_count = extract_instagram_followers_from_text(page_content)
-
-                        if not followers_count:
-                            followers_count = self.fetch_instagram_followers(formatted_url)
-
-                        print(f"[INSTA CDP] ✅ Verified match: {formatted_url} | Followers: {followers_count or 'N/A'} for '{clean_brand}'")
-                        logger.info("📸 [Google Instagram Match] Found: %s | Followers: %s (Brand: '%s')", formatted_url, followers_count or "N/A", clean_brand)
-                        return formatted_url, followers_count
-
-                print(f"[INSTA CDP] ℹ️ No matching profile containing brand '{clean_brand}' in Google results.")
-                return None, ""
+                finally:
+                    # ------------------------------------------------------------
+                    # 3. ALWAYS close the search tab so tabs never accumulate or freeze Chrome
+                    # ------------------------------------------------------------
+                    if search_tab:
+                        try:
+                            await asyncio.wait_for(search_tab.close(), timeout=2.0)
+                        except Exception:
+                            pass
 
         except Exception as e_all:
-            print(f"[INSTA CDP] ⚠️ Error during Google search for '{clean_brand}': {e_all}")
+            print(f"[INSTA CDP] ⚠️ Google search notice for '{clean_brand}': {e_all}")
             return None, ""
+
+    def _run_cdp_search_sync(self, clean_brand: str) -> Tuple[Optional[str], str]:
+        """Runs async CDP search inside an event loop with strict error boundary."""
+        try:
+            return asyncio.run(self._async_google_search(clean_brand))
+        except Exception as ex:
+            logger.debug("[Instagram CDP runner notice] %s", str(ex))
+            return None, ""
+
+    def _run_fallback_search(self, clean_brand: str) -> List[Dict[str, Any]]:
+        """
+        Executes fast DDGS / DuckDuckGo fallback search with tight network timeouts.
+        """
+        queries = [
+            f"site:instagram.com {clean_brand}",
+            f"{clean_brand} instagram official",
+        ]
+        candidates: List[Dict[str, Any]] = []
+
+        if DDGS is not None:
+            try:
+                ddgs = DDGS(timeout=2.5)
+                for query in queries:
+                    results = []
+                    try:
+                        raw_gen = ddgs.text(keywords=query, max_results=5)
+                        for item in raw_gen:
+                            results.append(item)
+                            if len(results) >= 5:
+                                break
+                    except Exception:
+                        try:
+                            raw_gen = ddgs.text(query, max_results=5)
+                            for item in raw_gen:
+                                results.append(item)
+                                if len(results) >= 5:
+                                    break
+                        except Exception:
+                            pass
+
+                    if results:
+                        for res in results:
+                            raw_link = res.get("href") or res.get("url") or res.get("link") or ""
+                            formatted_url = extract_instagram_url_from_string(raw_link)
+                            if not formatted_url:
+                                continue
+
+                            username = get_instagram_username(formatted_url)
+                            if not username:
+                                continue
+
+                            title = res.get("title", "")
+                            snippet = res.get("body", "")
+                            score = calculate_match_score(clean_brand, username, title, snippet)
+                            followers = extract_instagram_followers_from_text(snippet) or extract_instagram_followers_from_text(title)
+
+                            if not any(x["url"] == formatted_url for x in candidates):
+                                candidates.append({
+                                    "url": formatted_url,
+                                    "username": username,
+                                    "score": score,
+                                    "title": title,
+                                    "followers": followers,
+                                    "snippet": snippet,
+                                })
+
+                    if candidates:
+                        break
+
+            except Exception as ex_ddgs:
+                logger.debug("[Instagram DDGS Engine notice] %s", str(ex_ddgs))
+
+        # Direct DuckDuckGo HTML Fallback if still no candidates
+        if not candidates:
+            try:
+                resp = self.http_session.post(
+                    "https://html.duckduckgo.com/html/",
+                    data={"q": f"site:instagram.com {clean_brand}", "b": ""},
+                    timeout=2.5,
+                )
+                if resp.status_code == 200:
+                    found_links = re.findall(r'href="([^"]+)"', resp.text)
+                    for raw_l in found_links:
+                        formatted_url = extract_instagram_url_from_string(raw_l)
+                        if formatted_url:
+                            username = get_instagram_username(formatted_url)
+                            if username:
+                                score = calculate_match_score(clean_brand, username)
+                                followers = extract_instagram_followers_from_text(raw_l)
+                                if not any(x["url"] == formatted_url for x in candidates):
+                                    candidates.append({
+                                        "url": formatted_url,
+                                        "username": username,
+                                        "score": score,
+                                        "title": "",
+                                        "followers": followers,
+                                        "snippet": "",
+                                    })
+            except Exception as ex_html:
+                logger.debug("[Instagram HTML Fallback notice] %s", str(ex_html))
+
+        return candidates
 
     def fetch_instagram_followers(self, instagram_url: Optional[str], snippet_text: str = "") -> str:
         """
@@ -552,7 +635,7 @@ class InstagramScraper:
         try:
             resp = self.http_session.get(
                 formatted_url,
-                timeout=2.5,
+                timeout=1.8,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
             )
             if resp.status_code == 200:
@@ -567,7 +650,7 @@ class InstagramScraper:
     def search_instagram_with_details(self, brand_name: Optional[str]) -> Dict[str, str]:
         """
         Discovers official Instagram profile URL and followers count for a brand.
-        Has strict timeouts (max 15-20 seconds total) so the scraper never gets stuck.
+        Uses ThreadPoolExecutor with strict hard timeouts so the scraper never hangs or stalls.
 
         Returns:
             Dict containing 'instagram_url' and 'instagram_followers'.
@@ -585,129 +668,45 @@ class InstagramScraper:
 
         cache_key = clean_brand.lower()
         if cache_key in self.cache:
-            cached_data = self.cache[cache_key]
-            return cached_data
+            return self.cache[cache_key]
 
         print(f"\n🔍 [INSTAGRAM SEARCH] Searching Instagram for brand: '{clean_brand}'...")
-        start_time = time.time()
 
         # ------------------------------------------------------------
         # Engine 1: Google Search inside active Chrome Browser (Port 9222)
         # ------------------------------------------------------------
         if self._is_cdp_available():
             try:
-                # Wrap with strict asyncio timeout of 12 seconds
-                async def run_with_timeout():
-                    return await asyncio.wait_for(self._async_google_search(clean_brand), timeout=12.0)
-
-                found_url, followers_cnt = asyncio.run(run_with_timeout())
-                if found_url:
-                    result = {
-                        "instagram_url": found_url,
-                        "instagram_followers": followers_cnt or "",
-                    }
-                    self.cache[cache_key] = result
-                    print(f"📸 [INSTAGRAM FOUND] Brand '{clean_brand}' -> {found_url} (Followers: {followers_cnt or 'N/A'})\n")
-                    return result
-            except asyncio.TimeoutError:
-                print(f"[INSTAGRAM] ⏱️ Chrome CDP Google search timed out (12s) for '{clean_brand}'. Continuing to fallback...")
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(self._run_cdp_search_sync, clean_brand)
+                    found_url, followers_cnt = future.result(timeout=6.0)
+                    if found_url:
+                        result = {
+                            "instagram_url": found_url,
+                            "instagram_followers": followers_cnt or "",
+                        }
+                        self.cache[cache_key] = result
+                        print(f"📸 [INSTAGRAM FOUND] Brand '{clean_brand}' -> {found_url} (Followers: {followers_cnt or 'N/A'})\n")
+                        return result
+            except concurrent.futures.TimeoutError:
+                print(f"[INSTAGRAM] ⏱️ Chrome CDP Google search timed out (6s) for '{clean_brand}'. Continuing to fallback...")
             except Exception as ex_cdp:
                 print(f"[INSTAGRAM] CDP Google Search notice: {ex_cdp}")
 
-        # If already took more than 15 seconds, don't wait further
-        elapsed = time.time() - start_time
-        if elapsed > 15.0:
-            print(f"[INSTAGRAM] ⏱️ Search duration {elapsed:.1f}s exceeded limit for '{clean_brand}'. Returning empty.\n")
-            empty_result = {"instagram_url": "", "instagram_followers": ""}
-            self.cache[cache_key] = empty_result
-            return empty_result
-
         # ------------------------------------------------------------
-        # Engine 2: Fallback to DuckDuckGo / HTML Search (Strict 5s timeout)
+        # Engine 2: Fallback to DuckDuckGo / HTML Search (Strict 3.5s timeout)
         # ------------------------------------------------------------
         print(f"[INSTAGRAM] Trying fallback search engine for '{clean_brand}'...")
-        queries = [
-            f"site:instagram.com {clean_brand}",
-            f"{clean_brand} instagram official",
-        ]
-
         all_candidates: List[Dict[str, Any]] = []
 
-        if DDGS is not None:
-            try:
-                ddgs = DDGS(timeout=4)
-                for query in queries:
-                    if time.time() - start_time > 18.0:
-                        break
-                    results = []
-                    try:
-                        results = list(ddgs.text(keywords=query, max_results=5))
-                    except Exception:
-                        try:
-                            results = list(ddgs.text(query, max_results=5))
-                        except Exception:
-                            pass
-
-                    if results:
-                        for res in results:
-                            raw_link = res.get("href") or res.get("url") or res.get("link") or ""
-                            formatted_url = extract_instagram_url_from_string(raw_link)
-                            if not formatted_url:
-                                continue
-
-                            username = get_instagram_username(formatted_url)
-                            if not username:
-                                continue
-
-                            title = res.get("title", "")
-                            snippet = res.get("body", "")
-                            score = calculate_match_score(clean_brand, username, title, snippet)
-                            followers = extract_instagram_followers_from_text(snippet) or extract_instagram_followers_from_text(title)
-
-                            if not any(x["url"] == formatted_url for x in all_candidates):
-                                all_candidates.append({
-                                    "url": formatted_url,
-                                    "username": username,
-                                    "score": score,
-                                    "title": title,
-                                    "followers": followers,
-                                    "snippet": snippet,
-                                })
-
-                    if all_candidates:
-                        break
-
-            except Exception as ex_ddgs:
-                logger.debug("[Instagram DDGS Engine notice] %s", str(ex_ddgs))
-
-        # Direct DuckDuckGo HTML Fallback if still no candidates
-        if not all_candidates and (time.time() - start_time < 18.0):
-            try:
-                resp = self.http_session.post(
-                    "https://html.duckduckgo.com/html/",
-                    data={"q": f"site:instagram.com {clean_brand}", "b": ""},
-                    timeout=4,
-                )
-                if resp.status_code == 200:
-                    found_links = re.findall(r'href="([^"]+)"', resp.text)
-                    for raw_l in found_links:
-                        formatted_url = extract_instagram_url_from_string(raw_l)
-                        if formatted_url:
-                            username = get_instagram_username(formatted_url)
-                            if username:
-                                score = calculate_match_score(clean_brand, username)
-                                followers = extract_instagram_followers_from_text(raw_l)
-                                if not any(x["url"] == formatted_url for x in all_candidates):
-                                    all_candidates.append({
-                                        "url": formatted_url,
-                                        "username": username,
-                                        "score": score,
-                                        "title": "",
-                                        "followers": followers,
-                                        "snippet": "",
-                                    })
-            except Exception as ex_html:
-                logger.debug("[Instagram HTML Fallback notice] %s", str(ex_html))
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self._run_fallback_search, clean_brand)
+                all_candidates = future.result(timeout=3.5)
+        except concurrent.futures.TimeoutError:
+            print(f"[INSTAGRAM] ⏱️ Fallback search timed out (3.5s) for '{clean_brand}'. Continuing.")
+        except Exception as ex_fb:
+            logger.debug("[Instagram Fallback notice] %s", str(ex_fb))
 
         # Evaluation & Filtering: Enforce that brand name is included in URL
         valid_candidates = [

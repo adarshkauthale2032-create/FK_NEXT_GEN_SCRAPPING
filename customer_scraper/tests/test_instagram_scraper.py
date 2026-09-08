@@ -120,6 +120,34 @@ class TestInstagramScraperMocked(unittest.TestCase):
             cached_url = scraper.search_instagram("Woostro")
             self.assertEqual(cached_url, "https://www.instagram.com/woostro_official/")
 
+    def test_search_instagram_cdp_timeout_fallback(self):
+        scraper = InstagramScraper(request_delay=0, min_score=30)
+        scraper._is_cdp_available = MagicMock(return_value=True)
+        scraper._run_cdp_search_sync = MagicMock(return_value=(None, ""))
+
+        mock_ddgs = MagicMock()
+        mock_ddgs.text.return_value = [
+            {
+                "href": "https://www.instagram.com/derma_care/",
+                "title": "Derma Care Official",
+                "body": "50K Followers",
+            }
+        ]
+
+        with patch("scrapers.instagram_scraper.DDGS", return_value=mock_ddgs):
+            details = scraper.search_instagram_with_details("Derma Care")
+            self.assertEqual(details["instagram_url"], "https://www.instagram.com/derma_care/")
+            self.assertEqual(details["instagram_followers"], "50K")
+
+    def test_search_returns_empty_when_no_match(self):
+        scraper = InstagramScraper(request_delay=0, min_score=30)
+        scraper._is_cdp_available = MagicMock(return_value=False)
+        scraper._run_fallback_search = MagicMock(return_value=[])
+
+        details = scraper.search_instagram_with_details("UnknownBrandXYZ123")
+        self.assertEqual(details["instagram_url"], "")
+        self.assertEqual(details["instagram_followers"], "")
+
 
 class TestExcelWriter23Columns(unittest.TestCase):
     def setUp(self):

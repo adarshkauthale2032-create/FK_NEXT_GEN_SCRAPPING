@@ -84,7 +84,7 @@ class TestAuthManager(unittest.TestCase):
         ) as mock_refresh:
             success = auth.refresh_session(seller_id="seller_123", target_api="api2")
             self.assertTrue(success)
-            mock_refresh.assert_called_once_with(seller_id="seller_123", target_api="api2")
+            mock_refresh.assert_called_once_with(seller_id="seller_123", target_api="api2", force_new_tab=False)
             self.assertEqual(auth.cookies.get("connect.sid"), "token_api2")
             self.assertEqual(auth.headers.get("FK-CSRF-TOKEN"), "csrf_api2")
 
