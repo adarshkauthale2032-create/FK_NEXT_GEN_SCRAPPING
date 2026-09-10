@@ -29,6 +29,11 @@ class APIError(Exception):
     pass
 
 
+class NetworkConnectionError(APIError):
+    """Raised when network or VPN connection fails to reach Flipkart internal cloud."""
+    pass
+
+
 class APIResponseError(APIError):
     """Raised when an API returns a non-200 status or unexpected payload structure."""
     def __init__(self, message: str, status_code: Optional[int] = None, response_text: Optional[str] = None):
@@ -79,10 +84,12 @@ class APIClient:
             # Dynamically inject freshest CSRF token from auth_manager on every request/retry
             current_csrf = self.auth_manager.get_csrf_token()
             if current_csrf:
-                req_headers["FK-CSRF-TOKEN"] = current_csrf
-                req_headers["fk-csrf-token"] = current_csrf
-                session.headers["FK-CSRF-TOKEN"] = current_csrf
-                session.headers["fk-csrf-token"] = current_csrf
+                import urllib.parse
+                clean_csrf = urllib.parse.unquote(str(current_csrf)).strip()
+                req_headers["FK-CSRF-TOKEN"] = clean_csrf
+                req_headers["fk-csrf-token"] = clean_csrf
+                session.headers["FK-CSRF-TOKEN"] = clean_csrf
+                session.headers["fk-csrf-token"] = clean_csrf
 
             # Explicitly inject freshest Cookie header directly into every outgoing request
             cookie_str = self.auth_manager.get_cookie_header_string()
@@ -191,7 +198,7 @@ class APIClient:
                             full_url,
                             MAX_REQUEST_RETRIES
                         )
-                        raise APIError(f"Connection to {full_url} failed ({type(net_err).__name__}). Please check your VPN/network access.")
+                        raise NetworkConnectionError(f"Connection to {full_url} failed ({type(net_err).__name__}). Please check your VPN/network access.")
                 except APIError:
                     raise
                 except Exception as ex:
@@ -212,14 +219,14 @@ class APIClient:
                         seller_id = query_params["sellerId"][0]
 
                 target_api = "all"
-                if any(x in full_url for x in ("approval-store", "requestsV2", "sellerDashboard")):
+                if any(x in full_url for x in ("approval-store", "requestsV2", "sellerDashboard", "qnaStore", "questionsV2")):
                     target_api = "api2"
                 elif "getSellerDetails" in full_url:
                     target_api = "api1"
                 elif "getSellerContacts" in full_url or "get-locations" in full_url:
                     target_api = "api3"
 
-                refresh_target_seller = DEFAULT_SELLER_ID
+                refresh_target_seller = seller_id or DEFAULT_SELLER_ID
                 logger.info("🔄 Triggering session refresh from Chrome (Seller: %s, Target: %s, Auth attempt %d/%d)...", refresh_target_seller, target_api.upper(), auth_attempts, MAX_AUTH_RETRIES)
                 try:
                     refreshed = self.auth_manager.refresh_session(seller_id=refresh_target_seller, target_api=target_api)
@@ -227,10 +234,11 @@ class APIClient:
                         raise AuthExpiredError(f"Unable to extract fresh session cookies from Chrome for {target_api}.")
                     logger.info("✅ [AUTH RECOVERED] Fresh session captured! Re-executing API call: %s %s", method.upper(), full_url)
                     continue  # Re-run request with fresh session!
+                except AuthExpiredError:
+                    raise
                 except Exception as auth_err:
                     logger.error("Auth refresh failed: %s", str(auth_err))
-                    if auth_attempts >= MAX_AUTH_RETRIES:
-                        raise AuthExpiredError(f"Authentication failed: {str(auth_err)}")
+                    raise AuthExpiredError(f"Authentication failed: {str(auth_err)}")
             else:
                 logger.error("Exceeded maximum auth retry attempts (%d).", MAX_AUTH_RETRIES)
                 raise AuthExpiredError(

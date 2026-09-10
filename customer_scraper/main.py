@@ -40,7 +40,7 @@ from config.settings import (
     SESSION_CONFIG_PATH,
 )
 from auth.auth_manager import AuthManager, AuthExpiredError
-from api.api_client import APIClient, APIError
+from api.api_client import APIClient, APIError, NetworkConnectionError
 from scrapers.api1_scraper import API1Scraper
 from scrapers.api2_scraper import API2Scraper
 from scrapers.api3_scraper import API3Scraper
@@ -132,22 +132,23 @@ class ProgressTracker:
     def sync_with_csv(self, csv_ids: Set[str], last_id: Optional[str] = None) -> None:
         """
         Synchronizes state with completed IDs and last completed ID found in the CSV dataset.
+        If rows were deleted from the CSV/Excel files, synchronizes progress.json so deleted
+        records are re-scraped starting from the exact next available position.
         """
-        updated = False
-        if csv_ids:
+        if csv_ids is not None:
             before_count = len(self.completed_ids)
-            self.completed_ids.update(csv_ids)
-            if len(self.completed_ids) > before_count:
-                logger.info("Synchronized progress: found %d completed IDs in output datasets.", len(self.completed_ids))
-                updated = True
+            self.completed_ids = set(csv_ids)
+            if last_id and str(last_id).strip():
+                self.last_completed_id = str(last_id).strip()
+            elif not csv_ids:
+                self.last_completed_id = ""
 
-        if last_id and str(last_id).strip():
-            clean_last = str(last_id).strip()
-            if self.last_completed_id != clean_last:
-                self.last_completed_id = clean_last
-                updated = True
-
-        if updated:
+            if before_count != len(self.completed_ids):
+                logger.info(
+                    "Synchronized progress with CSV: %d active completed IDs (was %d).",
+                    len(self.completed_ids),
+                    before_count,
+                )
             self._save()
 
     # Backward compatibility alias
@@ -437,15 +438,16 @@ def main():
     logger.info("Verifying active session status...")
     session_valid = auth_manager.ensure_valid_session(seller_id=args.seller_id)
     if not session_valid:
-        logger.warning("Initial session check failed. Attempting automated browser extraction from Chrome...")
-        try:
-            auth_success = auth_manager.refresh_session(seller_id=args.seller_id)
-            if not auth_success or not auth_manager.cookies:
-                logger.error("Authentication required to proceed. Please ensure Chrome is open with remote debugging on port 9222 and logged in.")
-                return
-        except Exception as e:
-            logger.error("Authentication error: %s", str(e))
-            return
+        logger.error("Authentication required to proceed. Chrome CDP port 9222 is unreachable or session is expired.")
+        print("\n" + "=" * 80)
+        print("❌ [EXECUTION STOPPED - AUTHENTICATION REQUIRED]")
+        print("   Could not obtain active Flipkart session from Chrome.")
+        print("   👉 Please verify:")
+        print("      1. Chrome is running with remote debugging: chrome.exe --remote-debugging-port=9222")
+        print("      2. You are logged into Flipkart Seller Portal (suv-flipkart.seller-support.fkcloud.it)")
+        print("      3. Then re-run: python main.py")
+        print("=" * 80 + "\n")
+        return
 
     api_client = APIClient(auth_manager)
     api1 = API1Scraper(api_client)
@@ -528,8 +530,9 @@ def main():
                     unique_email = api3_data.get("unique_email", "No")
                     is_email_d2c = str(unique_email).strip().lower() == "yes"
 
-                    # Step 4: Search Instagram for Brand Name (with strict brand-in-URL validation)
+                    # Step 4: Search Instagram for Brand Name & Followers (with strict brand-in-URL validation)
                     instagram_url = ""
+                    instagram_followers = ""
                     from scrapers.instagram_scraper import extract_instagram_url_from_string, is_brand_in_instagram_url
 
                     # 4a. Check if brand_website_link is directly an Instagram profile
@@ -538,33 +541,40 @@ def main():
                         target_name = brand_name or account_name
                         if cand_url and target_name and is_brand_in_instagram_url(target_name, cand_url):
                             instagram_url = cand_url
+                            instagram_followers = insta_scraper.fetch_instagram_followers(cand_url)
 
                     # 4b. Search Instagram primarily using Brand Name
                     if not instagram_url and brand_name:
-                        instagram_url = insta_scraper.search_instagram(brand_name) or ""
+                        insta_details = insta_scraper.search_instagram_with_details(brand_name)
+                        instagram_url = insta_details.get("instagram_url", "")
+                        instagram_followers = insta_details.get("instagram_followers", "")
 
                     # 4c. Search using unique approved brands from API #2
                     if not instagram_url and api2_data.get("unique_brands"):
                         for brand_item in api2_data["unique_brands"]:
                             if brand_item and str(brand_item).strip().lower() not in (str(brand_name).strip().lower(), ""):
-                                found_insta = insta_scraper.search_instagram(brand_item) or ""
-                                if found_insta:
-                                    instagram_url = found_insta
+                                insta_details = insta_scraper.search_instagram_with_details(brand_item)
+                                if insta_details.get("instagram_url"):
+                                    instagram_url = insta_details["instagram_url"]
+                                    instagram_followers = insta_details.get("instagram_followers", "")
                                     break
 
                     # 4d. Fallback search using Account Name (with strict validation against brand_name/account_name)
                     if not instagram_url and account_name:
-                        found_insta = insta_scraper.search_instagram(account_name) or ""
-                        if found_insta:
+                        insta_details = insta_scraper.search_instagram_with_details(account_name)
+                        cand_url = insta_details.get("instagram_url", "")
+                        if cand_url:
                             target_name = brand_name or account_name
-                            if is_brand_in_instagram_url(target_name, found_insta):
-                                instagram_url = found_insta
+                            if is_brand_in_instagram_url(target_name, cand_url):
+                                instagram_url = cand_url
+                                instagram_followers = insta_details.get("instagram_followers", "")
 
                     # Final validation safeguard: If instagram_url is present, ensure target brand name is included
                     target_name = brand_name or account_name
                     if instagram_url and target_name and not is_brand_in_instagram_url(target_name, instagram_url):
                         logger.info("🚫 [Instagram Validation] URL '%s' does not contain brand '%s'. Skipping.", instagram_url, target_name)
                         instagram_url = ""
+                        instagram_followers = ""
 
                     is_insta_d2c = bool(instagram_url and str(instagram_url).strip().lower() not in ("null", "none", "", "n/a", "na"))
 
@@ -582,6 +592,7 @@ def main():
                         **api2_data,
                         **api3_data,
                         "instagram_url": instagram_url,
+                        "instagram_followers": instagram_followers,
                         "unique_email": unique_email,
                         "unique_email_yes_no": unique_email,
                         "isD2C": is_d2c_str,
@@ -599,8 +610,8 @@ def main():
                             d2c_no_count += 1
 
                         logger.info(
-                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Appr: %s | Act: %s | ReqID: %s | Brand: %s | BrOwner: %s | Doc: %s | Web: %s | Insta: %s | UniqEmail: %s | isD2C: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
-                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, approved_brand, actual_brand_count, request_id or "-", brand_name or "-", brand_owner or "-", document_type or "-", brand_website_link or "-", instagram_url or "-", unique_email, is_d2c_str, total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
+                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Appr: %s | Act: %s | ReqID: %s | Brand: %s | BrOwner: %s | Doc: %s | Web: %s | Insta: %s | Followers: %s | UniqEmail: %s | isD2C: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
+                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, approved_brand, actual_brand_count, request_id or "-", brand_name or "-", brand_owner or "-", document_type or "-", brand_website_link or "-", instagram_url or "-", instagram_followers or "-", unique_email, is_d2c_str, total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
                         )
                         if total_saved_in_session % 100 == 0:
                             logger.info(
@@ -621,41 +632,27 @@ def main():
                     break
 
                 except AuthExpiredError as auth_err:
-                    consecutive_auth_failures += 1
-                    logger.warning(
-                        "⚠️ [AUTH EXPIRY] Session expired while processing %s (Attempt %d/%d). Clearing expired session and auto-refreshing...",
-                        customer_id, seller_attempt, max_seller_retries
-                    )
-                    try:
-                        auth_manager.clear_session()
-                        refresh_ok = auth_manager.refresh_session(seller_id=DEFAULT_SELLER_ID)
-                        if refresh_ok and auth_manager.cookies:
-                            logger.info("✅ [AUTH RECOVERED] Successfully re-authenticated via Chrome! Continuing scraping...")
-                            consecutive_auth_failures = 0
-                            time.sleep(0.5)
-                            continue  # Automatically retry this seller attempt immediately
-                    except Exception as refresh_err:
-                        logger.error("Automatic session refresh failed: %s", str(refresh_err))
+                    logger.error("❌ [FATAL SESSION EXPIRED] %s", str(auth_err))
+                    print("\n" + "=" * 80)
+                    print("❌ [SESSION EXPIRED - SCRAPING STOPPED]")
+                    print(f"   {str(auth_err)}")
+                    print(f"   All records up to Sr No {current_sr_no - 1} are safely saved.")
+                    print("   👉 Please open Chrome (CDP Port 9222), log into Flipkart Seller Portal,")
+                    print("      and restart: python main.py")
+                    print("=" * 80 + "\n")
+                    return
 
-                    # If multiple consecutive auth failures occur
-                    if seller_attempt >= max_seller_retries:
-                        if consecutive_auth_failures >= 3:
-                            logger.warning(
-                                "[AUTH RETRY LOOP] Multiple consecutive auth failures (%d). Backing off 5s for automated recovery...",
-                                consecutive_auth_failures
-                            )
-                            time.sleep(5)
-                            try:
-                                auth_manager.clear_session()
-                                if auth_manager.refresh_session(seller_id=DEFAULT_SELLER_ID):
-                                    consecutive_auth_failures = 0
-                                    logger.info("✅ [AUTH RECOVERED] Auto-refresh succeeded after backoff. Resuming pipeline.")
-                            except Exception as re_err:
-                                logger.error("Automated refresh retry error: %s", str(re_err))
-
-                        failed_count += 1
-                        logger.warning("Skipping customer %s after %d failed auth attempts. Continuing to next seller...", customer_id, max_seller_retries)
-                        break
+                except NetworkConnectionError as net_err:
+                    logger.error("❌ [FATAL NETWORK / VPN FAILURE] %s", str(net_err))
+                    print("\n" + "=" * 80)
+                    print("❌ [NETWORK / VPN FAILURE - SCRAPING STOPPED]")
+                    print(f"   {str(net_err)}")
+                    print(f"   Failed seller / customer ID: {customer_id}")
+                    print(f"   All records up to Sr No {current_sr_no - 1} are safely saved.")
+                    print("   👉 Please verify/reconnect your VPN or internet connection to Flipkart cloud,")
+                    print("      and restart: python main.py")
+                    print("=" * 80 + "\n")
+                    return
 
                 except APIError as api_err:
                     failed_count += 1

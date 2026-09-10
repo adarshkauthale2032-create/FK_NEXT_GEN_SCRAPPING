@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 from typing import Any, Dict, Optional, Tuple
+import urllib.parse
 import urllib.request
 
 from config.settings import (
@@ -162,6 +163,7 @@ class PlaywrightSessionHandler:
         self,
         seller_id: Optional[str] = None,
         target_api: str = "all",
+        force_new_tab: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """
         Connects over CDP, refreshes the dynamic seller page, intercepts
@@ -177,10 +179,10 @@ class PlaywrightSessionHandler:
         target_info_url = SELLER_INFO_URL.format(seller_id=active_seller_id)
         target_approvals_url = SELLER_APPROVALS_URL.format(seller_id=active_seller_id)
 
-        # If refreshing only API 2, preserve existing valid Tab 1 session data
-        existing_session = self.read_current_session_file() if target_api == "api2" else {"cookies": {}, "headers": {}}
-        existing_cookies = existing_session.get("cookies", {})
-        existing_headers = existing_session.get("headers", {})
+        # Preserve existing session data from file (merged with fresh extraction)
+        existing_session = self.read_current_session_file()
+        existing_cookies = existing_session.get("cookies", {}) if isinstance(existing_session, dict) else {}
+        existing_headers = existing_session.get("headers", {}) if isinstance(existing_session, dict) else {}
 
         captured_headers: Dict[str, str] = {**get_default_headers(), **existing_headers}
         captured_cookies: Dict[str, str] = {**existing_cookies}
@@ -188,18 +190,22 @@ class PlaywrightSessionHandler:
 
         logger.info("[SESSION] Connecting to Chrome over CDP (%s) for target: %s...", self.cdp_url, target_api.upper())
 
+        # Pre-check if CDP port is open to fail fast with clear diagnostic if Chrome isn't running
+        if not is_cdp_available(self.cdp_url):
+            logger.warning("[SESSION] ⚠️ CDP port not responding on %s. Chrome might not be running with --remote-debugging-port=9222.", self.cdp_url)
+
         async with async_playwright() as p:
             try:
-                browser = await asyncio.wait_for(p.chromium.connect_over_cdp(self.cdp_url), timeout=8.0)
+                browser = await asyncio.wait_for(p.chromium.connect_over_cdp(self.cdp_url), timeout=4.0)
             except asyncio.TimeoutError:
-                logger.error("[SESSION] Timeout connecting to Chrome CDP on %s (8s)", self.cdp_url)
+                logger.error("[SESSION] ❌ Timeout connecting to Chrome CDP on %s (4s). Please verify Chrome is running with --remote-debugging-port=9222.", self.cdp_url)
                 return None
             except Exception as e:
-                logger.error("[SESSION] Could not connect to Chrome CDP (%s): %s", self.cdp_url, str(e))
+                logger.error("[SESSION] ❌ Could not connect to Chrome CDP (%s): %s", self.cdp_url, str(e))
                 return None
 
             if not browser.contexts:
-                logger.error("[SESSION] No browser contexts found in Chrome instance.")
+                logger.error("[SESSION] ❌ No browser contexts found in Chrome instance.")
                 return None
 
             context = browser.contexts[0]
@@ -211,11 +217,14 @@ class PlaywrightSessionHandler:
                 nonlocal csrf_token_found
                 try:
                     url = request.url
-                    # Intercept relevant Flipkart seller API requests
+                    # Intercept relevant Flipkart seller API requests across Tab 1 and Tab 2
                     if any(key in url for key in (
                         "getSellerDetails",
                         "approval-store",
                         "requestsV2",
+                        "requestsV2-count",
+                        "qnaStore",
+                        "questionsV2",
                         "orchestrator",
                         "graphql",
                         "sellerDashboard",
@@ -223,12 +232,13 @@ class PlaywrightSessionHandler:
                     )):
                         req_headers = await request.all_headers()
 
-                        # Extract CSRF token
+                        # Extract CSRF token (unquoting %2B, %2F etc. to raw characters)
                         for header_k, header_v in req_headers.items():
                             if header_k.lower() == "fk-csrf-token":
-                                csrf_token_found = header_v
-                                captured_headers["FK-CSRF-TOKEN"] = header_v
-                                captured_headers["fk-csrf-token"] = header_v
+                                clean_csrf = urllib.parse.unquote(str(header_v)).strip()
+                                csrf_token_found = clean_csrf
+                                captured_headers["FK-CSRF-TOKEN"] = clean_csrf
+                                captured_headers["fk-csrf-token"] = clean_csrf
                             elif header_k.lower() in (
                                 "user-agent",
                                 "sec-ch-ua",
@@ -236,6 +246,8 @@ class PlaywrightSessionHandler:
                                 "sec-ch-ua-platform",
                                 "origin",
                                 "referer",
+                                "operation",
+                                "operation-name",
                                 "x-requested-with",
                                 "x-internal-env-type",
                                 "x-marketplace-context",
@@ -247,76 +259,154 @@ class PlaywrightSessionHandler:
 
             context.on("request", handle_request)
 
+            tabs_to_extract = []
+            # ------------------------------------------------------------
+            # Step 1: Manage & Ensure Required Portal Tabs (Tab 1 & Tab 2) for All APIs
+            # ------------------------------------------------------------
+            # Identify existing Tab 1 (Seller Info for API #1 and API #3)
             tab_info = None
+            for page in context.pages:
+                try:
+                    p_url = page.url.lower()
+                    if ("#app/seller" in p_url or "/info" in p_url or "seller-support.fkcloud.it" in p_url) and "sellerdashboard" not in p_url:
+                        tab_info = page
+                        break
+                except Exception:
+                    pass
 
-            # ------------------------------------------------------------
-            # Step 1: Manage Flipkart Seller Portal Tab (or force reopen clean tab)
-            # ------------------------------------------------------------
+            # Identify existing Tab 2 (Seller Approvals for API #2)
+            tab_settings = None
+            for page in context.pages:
+                try:
+                    p_url = page.url.lower()
+                    if any(k in p_url for k in ("trackapprovalrequests", "approvalrequests", "requestsv2", "sellerdashboard", "dashboard/settings", "dashboard/listings", "approval-store")):
+                        tab_settings = page
+                        break
+                except Exception:
+                    pass
+
             if force_new_tab:
-                logger.info("[SESSION] Force new tab requested: Closing existing Flipkart tabs and opening a fresh tab...")
+                logger.info("[SESSION] Force new tab requested: Closing old portal tabs and opening fresh tabs for all APIs...")
                 old_portal_tabs = [
                     p for p in context.pages
                     if "seller-support.fkcloud.it" in p.url.lower() or "fkcloud.it" in p.url.lower()
                 ]
 
-                # 1. Open new tab first so browser context always remains active
+                # 1. Open fresh Tab 1
                 try:
                     tab_info = await context.new_page()
-                except Exception as ex_np:
-                    logger.debug("[SESSION] Error creating new page: %s", str(ex_np))
-                    tab_info = context.pages[0] if context.pages else None
+                    logger.info("[SESSION] 🚀 Opening fresh Tab 1 at %s...", target_info_url)
+                    await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=15.0)
+                    tabs_to_extract.append(tab_info)
+                except Exception as ex_goto:
+                    logger.debug("[SESSION] Fresh Tab 1 goto notice: %s", str(ex_goto))
 
-                # 2. Close old portal tabs
+                # 2. Open fresh Tab 2
+                try:
+                    tab_settings = await context.new_page()
+                    logger.info("[SESSION] 🚀 Opening fresh Tab 2 at %s...", target_approvals_url)
+                    print(f"[SESSION] 🌐 Opening fresh Tab 2 for API #2: {target_approvals_url}")
+                    await asyncio.wait_for(tab_settings.goto(target_approvals_url, wait_until="domcontentloaded"), timeout=15.0)
+                    tabs_to_extract.append(tab_settings)
+                except Exception as ex_st:
+                    logger.debug("[SESSION] Fresh Tab 2 goto notice: %s", str(ex_st))
+
+                # 3. Close old portal tabs
                 for old_p in old_portal_tabs:
-                    if old_p != tab_info:
+                    if old_p not in (tab_info, tab_settings):
                         try:
                             await old_p.close()
                         except Exception:
                             pass
 
-                # 3. Navigate new tab to portal URL
-                if tab_info:
-                    logger.info("[SESSION] Navigating fresh tab to %s...", target_info_url)
-                    try:
-                        await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=12.0)
-                    except Exception as ex_goto:
-                        logger.debug("[SESSION] Fresh tab goto notice: %s", str(ex_goto))
             else:
-                # Normal mode: find and reload existing tab or open if not found
-                for page in context.pages:
-                    try:
-                        p_url = page.url.lower()
-                        if "seller-support.fkcloud.it" in p_url or "fkcloud.it" in p_url:
-                            tab_info = page
-                            break
-                    except Exception:
-                        pass
-
+                # 1. Ensure Tab 1 (Seller Info for API #1 and API #3) is open and refreshed
                 if tab_info is None:
-                    logger.info("[SESSION] Tab 1 (Seller Info) not open. Opening: %s", target_info_url)
+                    logger.info("[SESSION] 🚀 Tab 1 (Seller Info) is not open in Chrome. Opening new tab automatically: %s", target_info_url)
+                    print(f"[SESSION] 🌐 Tab 1 (Seller Info) not open in browser. Script is opening it automatically: {target_info_url}")
                     try:
                         tab_info = await context.new_page()
-                        await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=10.0)
+                        await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=15.0)
                     except Exception as ex1:
                         logger.debug("[SESSION] Tab 1 open notice: %s", str(ex1))
                 else:
-                    logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Reloading...", tab_info.url)
+                    logger.info("[SESSION] Found Tab 1 (Seller Info): %s. Refreshing page URL: %s", tab_info.url, target_info_url)
                     try:
-                        await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=8.0)
+                        await asyncio.wait_for(tab_info.goto(target_info_url, wait_until="domcontentloaded"), timeout=12.0)
                     except Exception:
                         try:
-                            await asyncio.wait_for(tab_info.reload(wait_until="domcontentloaded"), timeout=8.0)
+                            await asyncio.wait_for(tab_info.reload(wait_until="domcontentloaded"), timeout=12.0)
                         except Exception as ex1:
                             logger.debug("[SESSION] Tab 1 reload notice: %s", str(ex1))
 
-            # Wait up to 3.5 seconds for background SPA API calls to fire or until CSRF is captured
-            for _ in range(18):
-                if csrf_token_found and "connect.sid" in captured_cookies:
+                if tab_info and tab_info not in tabs_to_extract:
+                    tabs_to_extract.append(tab_info)
+
+                # 2. Ensure Tab 2 (Seller Approvals for API #2) is open and refreshed
+                if tab_settings is None:
+                    logger.info("[SESSION] 🚀 Tab 2 (Seller Approvals) is not open in Chrome. Opening new tab automatically: %s", target_approvals_url)
+                    print(f"[SESSION] 🌐 Tab 2 (2nd API URL) is not open in browser. Script is opening it automatically: {target_approvals_url}")
+                    try:
+                        tab_settings = await context.new_page()
+                        await asyncio.wait_for(tab_settings.goto(target_approvals_url, wait_until="domcontentloaded"), timeout=15.0)
+                    except Exception as ex2:
+                        logger.debug("[SESSION] Tab 2 open notice: %s", str(ex2))
+                else:
+                    logger.info("[SESSION] Found Tab 2 (Seller Approvals): %s. Refreshing page URL: %s", tab_settings.url, target_approvals_url)
+                    try:
+                        await asyncio.wait_for(tab_settings.goto(target_approvals_url, wait_until="domcontentloaded"), timeout=12.0)
+                    except Exception:
+                        try:
+                            await asyncio.wait_for(tab_settings.reload(wait_until="domcontentloaded"), timeout=12.0)
+                        except Exception as ex2:
+                            logger.debug("[SESSION] Tab 2 reload notice: %s", str(ex2))
+
+                if tab_settings and tab_settings not in tabs_to_extract:
+                    tabs_to_extract.append(tab_settings)
+
+            # ------------------------------------------------------------
+            # Step 2: Refresh ALL Available Tabs in Browser Context
+            # ------------------------------------------------------------
+            # Refresh every single open tab in the browser without leaving any tab unrefreshed
+            all_browser_pages = list(context.pages)
+            logger.info("[SESSION] 🔄 Refreshing ALL %d open tab(s) in browser to synchronize complete session across all APIs...", len(all_browser_pages))
+            print(f"[SESSION] 🔄 Refreshing all {len(all_browser_pages)} available tab(s) in browser...")
+
+            for page_idx, page in enumerate(all_browser_pages, start=1):
+                try:
+                    if page in (tab_info, tab_settings):
+                        # Required tabs were specifically refreshed/navigated with their exact URLs above
+                        if page not in tabs_to_extract:
+                            tabs_to_extract.append(page)
+                        continue
+
+                    p_url = page.url
+                    logger.info("[SESSION] Tab #%d/%d (%s): Refreshing...", page_idx, len(all_browser_pages), p_url)
+                    try:
+                        await asyncio.wait_for(page.reload(wait_until="domcontentloaded"), timeout=10.0)
+                    except Exception:
+                        try:
+                            await asyncio.wait_for(page.goto(p_url, wait_until="domcontentloaded"), timeout=10.0)
+                        except Exception as ex_pg:
+                            logger.debug("[SESSION] Tab #%d reload notice: %s", page_idx, str(ex_pg))
+
+                    if page not in tabs_to_extract:
+                        tabs_to_extract.append(page)
+                except Exception as ex_each:
+                    logger.debug("[SESSION] Page iteration notice: %s", str(ex_each))
+
+            # Wait for background SPA API calls to fire and populate cookies/tokens
+            # Give SPA at least 2 seconds if a tab was just navigated/opened
+            spa_wait_start = time.time()
+            for _ in range(25):
+                elapsed = time.time() - spa_wait_start
+                # Ensure at least 1.5s elapsed for SPA network requests to complete
+                if elapsed >= 1.5 and csrf_token_found and ("connect.sid" in captured_cookies or "is_login" in captured_cookies):
                     break
                 await asyncio.sleep(0.2)
 
             # ------------------------------------------------------------
-            # Step 2: Extract All Live Cookies for fkcloud.it domain
+            # Step 3: Extract All Live Cookies for fkcloud.it domain
             # ------------------------------------------------------------
             try:
                 browser_cookies = await context.cookies([
@@ -333,10 +423,10 @@ class PlaywrightSessionHandler:
             except Exception as ex_ck:
                 logger.debug("[SESSION] Context cookies error: %s", str(ex_ck))
 
-            # Also extract document.cookie directly from active page DOM
-            if tab_info:
+            # Also extract document.cookie directly from all active tabs
+            for active_tab in tabs_to_extract:
                 try:
-                    dom_cookies = await tab_info.evaluate("() => document.cookie")
+                    dom_cookies = await active_tab.evaluate("() => document.cookie")
                     if dom_cookies:
                         for item in dom_cookies.split(";"):
                             if "=" in item:
@@ -346,9 +436,11 @@ class PlaywrightSessionHandler:
                 except Exception as ex_dom:
                     logger.debug("[SESSION] DOM cookies error: %s", str(ex_dom))
 
-            # Resolve CSRF token from cookies or headers (ensuring both are populated)
+            # Resolve CSRF token from cookies or headers (ensuring unquoted value for FK-CSRF-TOKEN)
             csrf_token_val = None
-            if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in captured_cookies:
+            if csrf_token_found:
+                csrf_token_val = csrf_token_found
+            elif "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" in captured_cookies:
                 csrf_token_val = captured_cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"]
             else:
                 for ck, cv in captured_cookies.items():
@@ -360,17 +452,19 @@ class PlaywrightSessionHandler:
                 csrf_token_val = captured_headers.get("FK-CSRF-TOKEN") or captured_headers.get("fk-csrf-token")
 
             if csrf_token_val:
-                captured_headers["FK-CSRF-TOKEN"] = csrf_token_val
-                captured_headers["fk-csrf-token"] = csrf_token_val
-                captured_cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"] = csrf_token_val
+                clean_csrf = urllib.parse.unquote(str(csrf_token_val)).strip()
+                captured_headers["FK-CSRF-TOKEN"] = clean_csrf
+                captured_headers["fk-csrf-token"] = clean_csrf
+                if "XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h" not in captured_cookies:
+                    captured_cookies["XyZ7pQ9rS2T1uV8wA3bC6dE4fG0h"] = clean_csrf
 
             # Read user-agent from page evaluation if not intercepted
-            active_tab = tab_info
-            if active_tab:
+            for active_tab in tabs_to_extract:
                 try:
                     ua = await active_tab.evaluate("() => navigator.userAgent")
                     if ua:
                         captured_headers["User-Agent"] = ua
+                        break
                 except Exception:
                     pass
 

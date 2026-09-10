@@ -244,6 +244,27 @@ class TestAPI3Scraper(unittest.TestCase):
         self.assertEqual(res["registered_email_id"], "")
         self.assertEqual(res["isD2C"], "No")
 
+    def test_api3_raises_network_error(self):
+        from api.api_client import NetworkConnectionError
+        self.mock_client.get.side_effect = NetworkConnectionError("VPN disconnected")
+        with self.assertRaises(NetworkConnectionError):
+            self.scraper.get_seller_contacts("NET_FAIL_ID")
+
+
+class TestNetworkErrorPropagation(unittest.TestCase):
+    def test_api1_and_api2_raise_network_error(self):
+        from api.api_client import NetworkConnectionError
+        mock_client = MagicMock(spec=APIClient)
+        mock_client.get.side_effect = NetworkConnectionError("Network connection failed")
+
+        api1 = API1Scraper(mock_client)
+        with self.assertRaises(NetworkConnectionError):
+            api1.get_seller_details("NET_ERR_1")
+
+        api2 = API2Scraper(mock_client)
+        with self.assertRaises(NetworkConnectionError):
+            api2.get_approval_counts("NET_ERR_2")
+
 
 if __name__ == "__main__":
     unittest.main()

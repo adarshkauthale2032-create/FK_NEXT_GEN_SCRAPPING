@@ -157,7 +157,7 @@ class TestExcelWriter22Columns(unittest.TestCase):
         rows = self.writer._format_customer_rows(data, sr_no=1)
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(len(row), 22)
+        self.assertEqual(len(row), 23)
 
         # Check column values in order
         self.assertEqual(row[0], 1)                   # Sr No
@@ -176,12 +176,13 @@ class TestExcelWriter22Columns(unittest.TestCase):
         self.assertEqual(row[13], "TM")               # Document Type
         self.assertEqual(row[14], "https://brand.com")# Brand Website Link
         self.assertEqual(row[15], "https://www.instagram.com/testenterprise/") # Instagram URL
-        self.assertEqual(row[16], "9876543210")       # Mobile Number
-        self.assertEqual(row[17], "9876543210")       # Registered Mobile Number
-        self.assertEqual(row[18], "info@brand.com")   # Email ID
-        self.assertEqual(row[19], "contact@brand.com")# Registered Email ID
-        self.assertEqual(row[20], "Yes")              # Unique Email
-        self.assertEqual(row[21], "Yes")              # isD2C
+        self.assertEqual(row[16], "")                 # Instagram Followers
+        self.assertEqual(row[17], "9876543210")       # Mobile Number
+        self.assertEqual(row[18], "9876543210")       # Registered Mobile Number
+        self.assertEqual(row[19], "info@brand.com")   # Email ID
+        self.assertEqual(row[20], "contact@brand.com")# Registered Email ID
+        self.assertEqual(row[21], "Yes")              # Unique Email
+        self.assertEqual(row[22], "Yes")              # isD2C
 
     def test_format_customer_rows_non_d2c_record(self):
         """Tests that non-D2C records are properly formatted with isD2C = 'No' and saved."""
@@ -201,6 +202,7 @@ class TestExcelWriter22Columns(unittest.TestCase):
             "document_type": "",
             "brand_website_link": "",
             "instagram_url": "",
+            "instagram_followers": "",
             "mobile_number": "9123456780",
             "registered_mobile_number": "9123456780",
             "email_id": "seller@gmail.com",
@@ -212,13 +214,14 @@ class TestExcelWriter22Columns(unittest.TestCase):
         rows = self.writer._format_customer_rows(data, sr_no=2)
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(len(row), 22)
+        self.assertEqual(len(row), 23)
         self.assertEqual(row[0], 2)
         self.assertEqual(row[1], "c9876543210")
         self.assertEqual(row[11], "")     # Brand Name
         self.assertEqual(row[15], "")     # Instagram URL
-        self.assertEqual(row[20], "No")   # Unique Email
-        self.assertEqual(row[21], "No")   # isD2C
+        self.assertEqual(row[16], "")     # Instagram Followers
+        self.assertEqual(row[21], "No")   # Unique Email
+        self.assertEqual(row[22], "No")   # isD2C
 
 
 if __name__ == "__main__":
