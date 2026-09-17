@@ -273,22 +273,38 @@ class API4Scraper:
             "operation-name": "sellerCopilot_runSseStream",
         }
 
-        print(f"🤖 [API #4] Prompt: '{prompt_text}' for seller '{customer_id}'")
+        print("\n" + "=" * 30 + f" [DEBUGGING 4TH API START: {customer_id}] " + "=" * 30)
+        print(f"🔗 [API #4 Endpoint] {endpoint}")
+        print(f"📝 [API #4 Prompt]   \"{prompt_text}\"")
+        print(f"📦 [API #4 Variables] {json.dumps(payload.get('variables', {}), indent=2)}")
+
+        sse_response_text = ""
         try:
             sse_response_text = self.api_client.post_sse_stream(
                 endpoint_or_url=endpoint,
                 json_data=payload,
                 headers=headers,
+                timeout=(10, 60),
             )
-        except (AuthExpiredError, NetworkConnectionError):
-            raise
         except Exception as e:
-            print(f"⚠️ [API #4] Error fetching SSE for {customer_id}: {str(e)}")
+            print(f"⚠️ [API #4 ERROR] Encountered issue for seller {customer_id}: {str(e)}")
             logger.warning("API #4 encountered an error for customer %s (%s). Proceeding with empty metrics.", customer_id, str(e))
             sse_response_text = ""
 
+        if sse_response_text:
+            print(f"📋 [API #4 Raw Stream Response Preview ({len(sse_response_text)} chars)]:\n{sse_response_text[:500]}...")
+        else:
+            print("ℹ️ [API #4 Response] Empty response or no SSE stream data received.")
+
         metrics = self.parse_copilot_response(sse_response_text)
-        print(f"📊 [API #4 Result] Month: '{metrics.get('month') or '-'}' | GMV: '{metrics.get('gross_amount') or '-'}' | Net: '{metrics.get('net_amount') or '-'}'")
+        print(f"📊 [API #4 Parsed Metrics]:")
+        print(f"   • Month:            {metrics.get('month') or '(empty)'}")
+        print(f"   • Gross Amount GMV: {metrics.get('gross_amount') or '(empty)'}")
+        print(f"   • Gross Units:      {metrics.get('gross_units') or '(empty)'}")
+        print(f"   • Net Amount:       {metrics.get('net_amount') or '(empty)'}")
+        print(f"   • Cancelled Amount: {metrics.get('cancelled_amount') or '(empty)'}")
+        print("=" * 30 + f" [DEBUGGING 4TH API END: {customer_id}] " + "=" * 30 + "\n")
+
         logger.info(
             "API #4 parsed for %s -> Month: '%s', GMV: '%s', Net: '%s'",
             customer_id,
