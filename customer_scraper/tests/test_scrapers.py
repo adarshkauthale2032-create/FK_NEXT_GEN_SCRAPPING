@@ -20,8 +20,8 @@ class TestAPI1Scraper(unittest.TestCase):
         self.mock_client.get.return_value = {
             "result": {
                 "displayName": "Seller One",
-                "pickupAddressLine1": "Plot 42, Tech Park,",
-                "pickupAddressLine2": "Phase 1, Bangalore",
+                "pickupAddressLine1": "Thavallengal complex",
+                "pickupAddressLine2": "Perinthalmanna, near Fire station",
                 "supportRole": {
                     "tier_type": "SUPPORT",
                     "role_name": None,
@@ -44,6 +44,8 @@ class TestAPI1Scraper(unittest.TestCase):
                     }
                 },
                 "profileInfo": {
+                    "city": "MALAPPURAM",
+                    "pincode": "679322",
                     "created_at": "2022-01-15T10:00:00Z"
                 },
                 "liveDate": "2022-02-01"
@@ -56,7 +58,7 @@ class TestAPI1Scraper(unittest.TestCase):
         self.assertEqual(res["account_status"], "ACTIVE")
         self.assertEqual(res["support_manager"], "No")
         self.assertEqual(res["seller_tier"], "Silver")
-        self.assertEqual(res["address"], "Plot 42, Tech Park, Phase 1, Bangalore")
+        self.assertEqual(res["address"], "Thavallengal complex Perinthalmanna, near Fire station MALAPPURAM 679322")
         self.assertEqual(res["signed_up_date"], "2022-01-15")
         self.assertEqual(res["live_date"], "2022-02-01")
 

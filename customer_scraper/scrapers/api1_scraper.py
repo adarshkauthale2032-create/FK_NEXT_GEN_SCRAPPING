@@ -175,7 +175,7 @@ class API1Scraper:
             # Secondary fallback if structure varies
             seller_tier = self._safe_get(result, "darwin_tier_v2", "tier_name")
 
-        # 5. Address: result.pickupAddressLine1 + result.pickupAddressLine2 (with fallbacks)
+        # 5. Address: result.pickupAddressLine1 + result.pickupAddressLine2 + result.profileInfo.city + result.profileInfo.pincode (with fallbacks)
         line1 = self._safe_get(result, "pickupAddressLine1")
         line2 = self._safe_get(result, "pickupAddressLine2")
 
@@ -188,7 +188,23 @@ class API1Scraper:
         if not line2:
             line2 = self._safe_get(result, "registeredAddressLine2")
 
-        addr_parts = [p.strip() for p in (line1, line2) if p and str(p).strip() and str(p).strip().lower() not in ("null", "none")]
+        city = self._safe_get(result, "profileInfo", "city")
+        if not city:
+            city = self._safe_get(result, "pickupCity")
+        if not city:
+            city = self._safe_get(result, "city")
+
+        pincode = self._safe_get(result, "profileInfo", "pincode")
+        if not pincode:
+            pincode = self._safe_get(result, "pickupPincode")
+        if not pincode:
+            pincode = self._safe_get(result, "pincode")
+
+        addr_parts = [
+            p.strip()
+            for p in (line1, line2, city, pincode)
+            if p and str(p).strip() and str(p).strip().lower() not in ("null", "none")
+        ]
         address = " ".join(addr_parts)
 
         # 6. Signed Up Date: result.profileInfo.created_at (formatted to date only)
