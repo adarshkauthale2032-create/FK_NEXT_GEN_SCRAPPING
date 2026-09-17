@@ -254,3 +254,99 @@ class APIClient:
     def post(self, endpoint_or_url: str, json_data: Optional[Dict[str, Any]] = None, **kwargs) -> Any:
         """Helper for POST requests."""
         return self.request("POST", endpoint_or_url, json_data=json_data, **kwargs)
+
+    def post_sse_stream(
+        self,
+        endpoint_or_url: str,
+        json_data: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        timeout: Union[int, Tuple[int, int]] = (8, 60),
+    ) -> str:
+        """
+        Executes a POST request against a GraphQL Server-Sent Events (SSE) stream endpoint,
+        handles authentication/CSRF tokens and auth refresh, and collects all streamed text.
+        """
+        full_url = self._build_url(endpoint_or_url)
+        auth_attempts = 0
+
+        while auth_attempts <= MAX_AUTH_RETRIES:
+            session = self.auth_manager.get_session()
+
+            req_headers = dict(self.auth_manager.headers)
+            req_headers["Accept"] = "text/event-stream"
+            req_headers["Content-Type"] = "application/json; charset=utf-8"
+            req_headers["operation"] = "subscription"
+            req_headers["operation-name"] = "sellerCopilot_runSseStream"
+
+            if headers:
+                req_headers.update(headers)
+
+            current_csrf = self.auth_manager.get_csrf_token()
+            if current_csrf:
+                import urllib.parse
+                clean_csrf = urllib.parse.unquote(str(current_csrf)).strip()
+                req_headers["FK-CSRF-TOKEN"] = clean_csrf
+                req_headers["fk-csrf-token"] = clean_csrf
+                session.headers["FK-CSRF-TOKEN"] = clean_csrf
+                session.headers["fk-csrf-token"] = clean_csrf
+
+            cookie_str = self.auth_manager.get_cookie_header_string()
+            if cookie_str:
+                req_headers["Cookie"] = cookie_str
+
+            retry_count = 0
+            while retry_count < MAX_REQUEST_RETRIES:
+                try:
+                    logger.debug("Executing SSE stream POST to %s (Attempt %d)", full_url, retry_count + 1)
+                    response = session.post(
+                        url=full_url,
+                        json=json_data,
+                        headers=req_headers,
+                        timeout=timeout,
+                        stream=True,
+                    )
+
+                    if self.auth_manager.is_session_expired(response):
+                        logger.warning("⚠️ [AUTH EXPIRED on SSE] Session expired on %s", full_url)
+                        self.auth_manager.clear_session()
+                        break
+
+                    if response.status_code == 200:
+                        lines = []
+                        for chunk in response.iter_lines(decode_unicode=True):
+                            if chunk is not None:
+                                lines.append(chunk)
+                        return "\n".join(lines)
+
+                    if 400 <= response.status_code < 500:
+                        raise APIResponseError(f"HTTP Client Error {response.status_code} for {full_url}", status_code=response.status_code)
+
+                    if response.status_code >= 500:
+                        retry_count += 1
+                        time.sleep(BACKOFF_FACTOR ** retry_count)
+                        continue
+
+                except (requests.ConnectionError, requests.Timeout) as net_err:
+                    retry_count += 1
+                    if retry_count < MAX_REQUEST_RETRIES:
+                        time.sleep(BACKOFF_FACTOR ** retry_count)
+                    else:
+                        raise NetworkConnectionError(f"Connection to {full_url} failed: {str(net_err)}")
+                except APIError:
+                    raise
+                except Exception as ex:
+                    raise APIError(f"SSE Request failed: {str(ex)}")
+
+            auth_attempts += 1
+            if auth_attempts <= MAX_AUTH_RETRIES:
+                logger.info("🔄 Refreshing session for SSE stream call...")
+                try:
+                    self.auth_manager.refresh_session(target_api="all")
+                    continue
+                except Exception as auth_err:
+                    raise AuthExpiredError(f"Auth refresh failed for SSE stream: {str(auth_err)}")
+            else:
+                raise AuthExpiredError("Exceeded max auth retries on SSE stream endpoint.")
+
+        return ""
+

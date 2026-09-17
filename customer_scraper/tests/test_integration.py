@@ -189,24 +189,30 @@ class TestIntegrationScraperFlow(unittest.TestCase):
             rows = list(csv.reader(f))
 
         self.assertEqual(len(rows), 2)  # Header + 1 row
+        self.assertEqual(len(rows[1]), 30)
         self.assertEqual(rows[1][1], cust_id)
         self.assertEqual(rows[1][2], "Unmanaged Seller")
         self.assertEqual(rows[1][3], "ACTIVE")
         self.assertEqual(rows[1][4], "No")  # Support Manager
         self.assertEqual(rows[1][5], "Bronze")  # Seller Tier
-        self.assertEqual(rows[1][6], "2020-01-01")  # Signed Up Date
-        self.assertEqual(rows[1][7], "2020-01-10")  # Live Date
-        self.assertEqual(rows[1][8], "26")  # Approved Brand
-        self.assertEqual(rows[1][10], "")   # Request ID
-        self.assertEqual(rows[1][11], "RRCART")  # Brand Name
-        self.assertEqual(rows[1][15], "")   # Instagram URL
-        self.assertEqual(rows[1][16], "")   # Instagram Followers
-        self.assertEqual(rows[1][17], "9123456780")  # Mobile Number
-        self.assertEqual(rows[1][18], "9123456781")  # Registered Mobile Number
-        self.assertEqual(rows[1][19], "unman@mail.com")  # Email ID
-        self.assertEqual(rows[1][20], "unman_prim@mail.com")  # Registered Email ID
-        self.assertEqual(rows[1][21], "No")  # Unique Email
-        self.assertEqual(rows[1][22], "No")  # isD2C (mail.com is generic)
+        self.assertEqual(rows[1][6], "")  # Address
+        self.assertEqual(rows[1][7], "2020-01-01")  # Signed Up Date
+        self.assertEqual(rows[1][8], "2020-01-10")  # Live Date
+        self.assertEqual(rows[1][9], "26")  # Approved Brand
+        self.assertEqual(rows[1][10], "25")  # Actual Brand Count
+        self.assertEqual(rows[1][11], "")   # Request ID
+        self.assertEqual(rows[1][12], "RRCART")  # Brand Name
+        self.assertEqual(rows[1][13], "")   # Vertical Name
+        self.assertEqual(rows[1][17], "")   # Instagram URL
+        self.assertEqual(rows[1][18], "")   # Instagram Followers
+        self.assertEqual(rows[1][19], "9123456780")  # Mobile Number
+        self.assertEqual(rows[1][20], "9123456781")  # Registered Mobile Number
+        self.assertEqual(rows[1][21], "unman@mail.com")  # Email ID
+        self.assertEqual(rows[1][22], "unman_prim@mail.com")  # Registered Email ID
+        self.assertEqual(rows[1][23], "No")  # Unique Email
+        self.assertEqual(rows[1][24], "No")  # isD2C (mail.com is generic)
+        self.assertEqual(rows[1][25], "")   # Month
+        self.assertEqual(rows[1][26], "")   # Gross Amount (GMV)
 
     def test_seller_limit_stops_execution(self):
         limit = 2
@@ -303,7 +309,7 @@ class TestIntegrationScraperFlow(unittest.TestCase):
 
         self.assertEqual(len(rows), 2)  # Header + 1 row
         self.assertEqual(rows[1][1], "D2C_SELLER")
-        self.assertEqual(rows[1][14], "Yes")
+        self.assertEqual(rows[1][24], "Yes")
         self.assertEqual(d2c_saved, 1)
 
         # But progress tracker must contain BOTH

@@ -83,6 +83,11 @@ class TestCSVWriter(unittest.TestCase):
             "registered_mobile_number": "9876543211",
             "email_id": "contact@retail.com",
             "registered_email_id": "reg@retail.com",
+            "month": "June 2026 | July 2026 | August 2026",
+            "gross_amount": "₹915 | ₹1,603 | ₹6,313",
+            "gross_units": "1 | 1 | 4",
+            "net_amount": "₹0 | ₹1,603 | ₹3,082",
+            "cancelled_amount": "₹915 | ₹0 | ₹4,692",
         }
 
         success = self.writer.append_customer(cust_data, sr_no=2)
@@ -93,6 +98,7 @@ class TestCSVWriter(unittest.TestCase):
 
         self.assertEqual(len(rows), 2)  # Header + 1 data row
         row_vals = rows[1]
+        self.assertEqual(len(row_vals), 30)
         self.assertEqual(row_vals[0], "2")  # Sr No
         self.assertEqual(row_vals[1], "CUST_002")
         self.assertEqual(row_vals[2], "Retailer Plus")
@@ -115,6 +121,11 @@ class TestCSVWriter(unittest.TestCase):
         self.assertEqual(row_vals[22], "reg@retail.com")
         self.assertEqual(row_vals[23], "Yes")         # Unique Email
         self.assertEqual(row_vals[24], "Yes")         # retail.com is custom domain -> isD2C = Yes
+        self.assertEqual(row_vals[25], "June 2026 | July 2026 | August 2026")  # Month
+        self.assertEqual(row_vals[26], "₹915 | ₹1,603 | ₹6,313")               # Gross Amount (GMV)
+        self.assertEqual(row_vals[27], "1 | 1 | 4")                            # Gross Units
+        self.assertEqual(row_vals[28], "₹0 | ₹1,603 | ₹3,082")                 # Net Amount
+        self.assertEqual(row_vals[29], "₹915 | ₹0 | ₹4,692")                   # Cancelled Amount
 
     def test_get_completed_customer_ids(self):
         cust1 = {"customer_id": "ID_AAA", "support_manager": "Yes"}

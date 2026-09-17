@@ -122,13 +122,13 @@ class TestQnAParser(unittest.TestCase):
         self.assertTrue(res["brand_is_d2c"])
 
 
-class TestExcelWriter25Columns(unittest.TestCase):
+class TestExcelWriter30Columns(unittest.TestCase):
     def setUp(self):
         self.writer = CSVWriter()
 
-    def test_format_customer_rows_25_columns(self):
-        """Tests that formatted row has exactly 25 columns matching CSV_COLUMNS."""
-        self.assertEqual(len(CSV_COLUMNS), 25)
+    def test_format_customer_rows_30_columns(self):
+        """Tests that formatted row has exactly 30 columns matching CSV_COLUMNS."""
+        self.assertEqual(len(CSV_COLUMNS), 30)
 
         data = {
             "customer_id": "c1234567890",
@@ -154,12 +154,17 @@ class TestExcelWriter25Columns(unittest.TestCase):
             "registered_email_id": "contact@brand.com",
             "unique_email": "Yes",
             "isD2C": "Yes",
+            "month": "June 2026",
+            "gross_amount": "₹10,000",
+            "gross_units": "5",
+            "net_amount": "₹8,000",
+            "cancelled_amount": "₹2,000",
         }
 
         rows = self.writer._format_customer_rows(data, sr_no=1)
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(len(row), 25)
+        self.assertEqual(len(row), 30)
 
         # Check column values in order
         self.assertEqual(row[0], 1)                   # Sr No
@@ -187,6 +192,11 @@ class TestExcelWriter25Columns(unittest.TestCase):
         self.assertEqual(row[22], "contact@brand.com")# Registered Email ID
         self.assertEqual(row[23], "Yes")              # Unique Email
         self.assertEqual(row[24], "Yes")              # isD2C
+        self.assertEqual(row[25], "June 2026")        # Month
+        self.assertEqual(row[26], "₹10,000")          # Gross Amount (GMV)
+        self.assertEqual(row[27], "5")                # Gross Units
+        self.assertEqual(row[28], "₹8,000")           # Net Amount
+        self.assertEqual(row[29], "₹2,000")           # Cancelled Amount
 
     def test_format_customer_rows_non_d2c_record(self):
         """Tests that non-D2C records are properly formatted with isD2C = 'No' and saved."""
@@ -220,7 +230,7 @@ class TestExcelWriter25Columns(unittest.TestCase):
         rows = self.writer._format_customer_rows(data, sr_no=2)
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(len(row), 25)
+        self.assertEqual(len(row), 30)
         self.assertEqual(row[0], 2)
         self.assertEqual(row[1], "c9876543210")
         self.assertEqual(row[6], "")      # Address
@@ -230,6 +240,8 @@ class TestExcelWriter25Columns(unittest.TestCase):
         self.assertEqual(row[18], "")     # Instagram Followers
         self.assertEqual(row[23], "No")   # Unique Email
         self.assertEqual(row[24], "No")   # isD2C
+        self.assertEqual(row[25], "")     # Month
+        self.assertEqual(row[26], "")     # Gross Amount
 
 
 if __name__ == "__main__":

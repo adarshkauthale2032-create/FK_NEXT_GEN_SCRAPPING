@@ -69,6 +69,7 @@ API2_COUNT_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2-count?sel
 API2_REQUESTS_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2?sellerId={customer_id}"
 API2_ENDPOINT = API2_REQUESTS_ENDPOINT  # Compatibility alias
 API3_ENDPOINT = "/getSellerContacts?sellerId={customer_id}"
+API4_ENDPOINT = "/sellerDashboard/napi/graphql-sse?sellerId={customer_id}"
 API_APPROVALS_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2?sellerId={customer_id}"
 API_QUESTIONS_ENDPOINT = "/sellerDashboard/napi/qnaStore/questionsV2?processId={request_id}&sellerId={customer_id}"
 
@@ -108,7 +109,7 @@ GENERIC_EMAIL_DOMAINS = {
     "gmx.com",
 }
 
-# CSV / Excel Column Definitions (Preserving strict order - 25 Columns)
+# CSV / Excel Column Definitions (Preserving strict order - 30 Columns)
 CSV_COLUMNS = [
     "Sr No",
     "Customer ID",
@@ -135,7 +136,13 @@ CSV_COLUMNS = [
     "Registered Email ID",
     "Unique Email",
     "isD2C",
+    "Month",
+    "Gross Amount (GMV)",
+    "Gross Units",
+    "Net Amount",
+    "Cancelled Amount",
 ]
 EXCEL_COLUMNS = CSV_COLUMNS  # Backward compatibility alias
+
 
 

@@ -44,6 +44,7 @@ from api.api_client import APIClient, APIError, NetworkConnectionError
 from scrapers.api1_scraper import API1Scraper
 from scrapers.api2_scraper import API2Scraper
 from scrapers.api3_scraper import API3Scraper
+from scrapers.api4_scraper import API4Scraper
 from scrapers.instagram_scraper import InstagramScraper
 from excel.excel_writer import CSVWriter, ExcelWriter
 
@@ -428,7 +429,7 @@ def main():
 
     logger.info("==========================================")
     logger.info("START - Flipkart Customer Scraping Automation")
-    logger.info("  Mode: API #1 (Details) + API #2 (Approvals & QnA) + API #3 (Contacts)")
+    logger.info("  Mode: API #1 (Details) + API #2 (Approvals & QnA) + API #3 (Contacts) + API #4 (Setu Copilot GMV)")
     logger.info("  Save Policy: ALL processed records saved (with isD2C: Yes / No)")
     logger.info("  Target Limit: %d records", max_scrape_limit)
     logger.info("  Input File: %s", INPUT_FILE_PATH.name)
@@ -453,6 +454,7 @@ def main():
     api1 = API1Scraper(api_client)
     api2 = API2Scraper(api_client)
     api3 = API3Scraper(api_client)
+    api4 = API4Scraper(api_client)
     insta_scraper = InstagramScraper()
     
     csv_writer = CSVWriter(output_dir=OUTPUT_DIR, chunk_size=chunk_size)
@@ -532,7 +534,15 @@ def main():
                     unique_email = api3_data.get("unique_email", "No")
                     is_email_d2c = str(unique_email).strip().lower() == "yes"
 
-                    # Step 4: Search Instagram for Brand Name & Followers (with strict brand-in-URL validation)
+                    # Step 4: Execute API #4 (Setu Copilot SSE - 3-Month GMV Metrics)
+                    api4_data = api4.get_seller_gmv_metrics(customer_id)
+                    month = api4_data.get("month", "")
+                    gross_amount = api4_data.get("gross_amount", "")
+                    gross_units = api4_data.get("gross_units", "")
+                    net_amount = api4_data.get("net_amount", "")
+                    cancelled_amount = api4_data.get("cancelled_amount", "")
+
+                    # Step 5: Search Instagram for Brand Name & Followers (with strict brand-in-URL validation)
                     instagram_url = ""
                     instagram_followers = ""
                     from scrapers.instagram_scraper import extract_instagram_url_from_string, is_brand_in_instagram_url
@@ -593,6 +603,7 @@ def main():
                         **api1_data,
                         **api2_data,
                         **api3_data,
+                        **api4_data,
                         "instagram_url": instagram_url,
                         "instagram_followers": instagram_followers,
                         "unique_email": unique_email,
@@ -601,7 +612,7 @@ def main():
                         "is_d2c": is_d2c_str,
                     }
 
-                    # Step 5: Save ALL processed records to CSV/Excel
+                    # Step 6: Save ALL processed records to CSV/Excel
                     save_success = csv_writer.append_customer(combined_record, sr_no=current_sr_no)
                     if save_success:
                         progress_tracker.mark_completed(customer_id, sheet_name=sheet_name, row_index=row_idx)
@@ -612,8 +623,8 @@ def main():
                             d2c_no_count += 1
 
                         logger.info(
-                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Tier: %s | Addr: %s | Appr: %s | Act: %s | ReqID: %s | Brand: %s | Vertical: %s | BrOwner: %s | Doc: %s | Web: %s | Insta: %s | Followers: %s | UniqEmail: %s | isD2C: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
-                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, tier, address or "-", approved_brand, actual_brand_count, request_id or "-", brand_name or "-", vertical_name or "-", brand_owner or "-", document_type or "-", brand_website_link or "-", instagram_url or "-", instagram_followers or "-", unique_email, is_d2c_str, total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
+                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Tier: %s | Addr: %s | Appr: %s | Act: %s | ReqID: %s | Brand: %s | Vertical: %s | BrOwner: %s | Doc: %s | Web: %s | Insta: %s | Followers: %s | UniqEmail: %s | isD2C: %s | Month: %s | GMV: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
+                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, tier, address or "-", approved_brand, actual_brand_count, request_id or "-", brand_name or "-", vertical_name or "-", brand_owner or "-", document_type or "-", brand_website_link or "-", instagram_url or "-", instagram_followers or "-", unique_email, is_d2c_str, month or "-", gross_amount or "-", total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
                         )
                         if total_saved_in_session % 100 == 0:
                             logger.info(

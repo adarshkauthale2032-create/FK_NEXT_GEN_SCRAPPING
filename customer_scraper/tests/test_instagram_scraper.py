@@ -149,13 +149,13 @@ class TestInstagramScraperMocked(unittest.TestCase):
         self.assertEqual(details["instagram_followers"], "")
 
 
-class TestExcelWriter25Columns(unittest.TestCase):
+class TestExcelWriter30Columns(unittest.TestCase):
     def setUp(self):
         self.writer = CSVWriter()
 
-    def test_format_customer_rows_25_columns_with_instagram_followers(self):
-        """Tests that formatted row has exactly 25 columns and Instagram Followers is at index 18."""
-        self.assertEqual(len(CSV_COLUMNS), 25)
+    def test_format_customer_rows_30_columns_with_instagram_followers(self):
+        """Tests that formatted row has exactly 30 columns and Instagram Followers is at index 18."""
+        self.assertEqual(len(CSV_COLUMNS), 30)
         self.assertEqual(CSV_COLUMNS[17], "Instagram URL")
         self.assertEqual(CSV_COLUMNS[18], "Instagram Followers")
 
@@ -189,7 +189,7 @@ class TestExcelWriter25Columns(unittest.TestCase):
         rows = self.writer._format_customer_rows(data, sr_no=5)
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(len(row), 25)
+        self.assertEqual(len(row), 30)
 
         self.assertEqual(row[0], 5)                                         # Sr No
         self.assertEqual(row[1], "c111222333444")                           # Customer ID

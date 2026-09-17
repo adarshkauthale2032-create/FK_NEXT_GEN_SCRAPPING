@@ -59,7 +59,7 @@ class CSVWriter:
         if self.excel_path:
             self._ensure_excel_file_exists(self.excel_path)
 
-        # Automatically check and migrate all output datasets to match master 25-column schema
+        # Automatically check and migrate all output datasets to match master 30-column schema
         self.verify_and_migrate_all_datasets()
 
     def verify_and_migrate_all_datasets(self) -> None:
@@ -221,11 +221,12 @@ class CSVWriter:
                     cell.alignment = header_align
                     cell.border = thin_border
 
-                # Set column widths (25 columns)
+                # Set column widths (30 columns)
                 col_widths = {
-                    1: 8, 2: 20, 3: 25, 4: 18, 5: 16, 6: 14, 7: 30, 8: 15, 9: 15,
+                    1: 8, 2: 20, 3: 25, 4: 18, 5: 16, 6: 14, 7: 35, 8: 15, 9: 15,
                     10: 16, 11: 18, 12: 18, 13: 22, 14: 20, 15: 16, 16: 16, 17: 32,
                     18: 35, 19: 20, 20: 18, 21: 24, 22: 25, 23: 28, 24: 14, 25: 12,
+                    26: 30, 27: 25, 28: 15, 29: 25, 30: 25,
                 }
                 for c_idx, width in col_widths.items():
                     col_letter = openpyxl.utils.get_column_letter(c_idx)
@@ -302,7 +303,7 @@ class CSVWriter:
                 cell.alignment = header_align
                 cell.border = thin_border
 
-            # Column widths (25 columns)
+            # Column widths (30 columns)
             col_widths = {
                 1: 8,   # Sr No
                 2: 20,  # Customer ID
@@ -310,7 +311,7 @@ class CSVWriter:
                 4: 18,  # Account Status
                 5: 16,  # Support Manager
                 6: 14,  # Seller Tier
-                7: 30,  # Address
+                7: 35,  # Address
                 8: 15,  # Signed Up Date
                 9: 15,  # Live Date
                 10: 16, # Approved Brand
@@ -329,6 +330,11 @@ class CSVWriter:
                 23: 28, # Registered Email ID
                 24: 14, # Unique Email
                 25: 12, # isD2C
+                26: 30, # Month
+                27: 25, # Gross Amount (GMV)
+                28: 15, # Gross Units
+                29: 25, # Net Amount
+                30: 25, # Cancelled Amount
             }
             for col_idx, width in col_widths.items():
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
@@ -593,6 +599,13 @@ class CSVWriter:
             else:
                 is_d2c = "No"
 
+        # GMV Metrics (API #4)
+        month = data.get("month", "")
+        gross_amount = data.get("gross_amount", "") or data.get("gross_amount_gmv", "")
+        gross_units = data.get("gross_units", "")
+        net_amount = data.get("net_amount", "")
+        cancelled_amount = data.get("cancelled_amount", "")
+
         return [[
             sr_no,
             customer_id,
@@ -619,6 +632,11 @@ class CSVWriter:
             registered_email,
             unique_email,
             is_d2c,
+            month,
+            gross_amount,
+            gross_units,
+            net_amount,
+            cancelled_amount,
         ]]
 
     def append_customer(self, customer_data: Dict[str, Any], sr_no: Any) -> bool:
