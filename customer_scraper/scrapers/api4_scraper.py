@@ -20,7 +20,7 @@ import uuid
 
 from api.api_client import APIClient, NetworkConnectionError
 from auth.auth_manager import AuthExpiredError
-from config.settings import API4_ENDPOINT
+from config.settings import API4_ENDPOINT, COPILOT_SESSION_ID
 
 logger = logging.getLogger("customer_scraper")
 
@@ -251,7 +251,7 @@ class API4Scraper:
             "variables": {
                 "input": {
                     "appName": "setu_orchestrator_suv",
-                    "sessionId": str(uuid.uuid4()),
+                    "sessionId": COPILOT_SESSION_ID,
                     "newMessage": {
                         "role": "user",
                         "parts": [{"text": prompt_text}],

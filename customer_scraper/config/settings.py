@@ -70,6 +70,7 @@ API2_REQUESTS_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2?seller
 API2_ENDPOINT = API2_REQUESTS_ENDPOINT  # Compatibility alias
 API3_ENDPOINT = "/getSellerContacts?sellerId={customer_id}"
 API4_ENDPOINT = "/sellerDashboard/napi/graphql-sse?sellerId={customer_id}"
+COPILOT_SESSION_ID = "8ad91b37-b143-4c75-9b0f-cddaed72a134"
 API_APPROVALS_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2?sellerId={customer_id}"
 API_QUESTIONS_ENDPOINT = "/sellerDashboard/napi/qnaStore/questionsV2?processId={request_id}&sellerId={customer_id}"
 
