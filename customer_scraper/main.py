@@ -642,6 +642,7 @@ def main():
 
                     total_evaluated_in_session += 1
                     consecutive_auth_failures = 0
+                    time.sleep(1)  # Brief pause between sellers for consistent server responses
                     break
 
                 except AuthExpiredError as auth_err:
