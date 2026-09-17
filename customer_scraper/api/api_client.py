@@ -8,7 +8,7 @@ session management, auth expiry detection, and standard JSON response parsing.
 import json
 import logging
 import time
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import requests
 
 from auth.auth_manager import AuthManager, AuthExpiredError
