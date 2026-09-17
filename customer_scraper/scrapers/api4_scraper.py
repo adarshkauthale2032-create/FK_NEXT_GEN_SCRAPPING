@@ -366,9 +366,10 @@ class API4Scraper:
 
     def get_seller_gmv_metrics(self, customer_id: str, base_date: Optional[datetime.date] = None) -> Dict[str, str]:
         """
-        Executes API #4 (Setu Copilot Session + SSE stream) for a seller and returns the 5 GMV metrics.
-        Uses a fresh session ID for each query to prevent conversation history pollution,
-        and automatically retries with a fresh session if initial response is empty.
+        Executes API #4 (Setu Copilot: CreateSession -> RunSseStream) for a seller and returns the 5 GMV metrics.
+        Follows the exact 2-step sequence from Flipkart portal:
+        1. SellerCopilotCreateSession: Creates and registers a new session on Flipkart backend.
+        2. sellerCopilot_runSseStream: Streams the GMV query via GraphQL SSE using the created session ID.
 
         Returns:
             Dict containing:
@@ -380,130 +381,120 @@ class API4Scraper:
         """
         months = get_last_three_months(base_date=base_date)
         m_names = [m[0] for m in months]
-        years = [m[1] for m in months]
-        prompt_text = f"GMV for {m_names[0]} {years[0]}, {m_names[1]} {years[1]} and {m_names[2]} {years[2]} month"
+        prompt_text = f"GMV for {m_names[0]} {m_names[1]} and {m_names[2]} month"
+        display_name = f"GMV Data for last {m_names[0]} {m_names[1]} and {m_names[2]} month"
 
         endpoint = API4_ENDPOINT.format(customer_id=customer_id)
         graphql_endpoint = API4_GRAPHQL_ENDPOINT.format(customer_id=customer_id)
-        logger.info("API #4 (Setu Copilot SSE) started for %s (Prompt: '%s')", customer_id, prompt_text)
+        logger.info("API #4 (Setu Copilot) started for %s (Prompt: '%s')", customer_id, prompt_text)
 
         print("\n" + "=" * 30 + f" [DEBUGGING 4TH API START: {customer_id}] " + "=" * 30)
         print(f"🔗 [API #4 Endpoint] {endpoint}")
         print(f"📝 [API #4 Prompt]   \"{prompt_text}\"")
 
-        max_copilot_attempts = 2
-        metrics = {
-            "month": "",
-            "gross_amount": "",
-            "gross_units": "",
-            "net_amount": "",
-            "cancelled_amount": "",
+        # Step 1: Call SellerCopilotCreateSession on Flipkart backend
+        create_session_payload = {
+            "operationName": "SellerCopilotCreateSession",
+            "variables": {
+                "appName": "setu_orchestrator_suv",
+                "displayName": display_name,
+            },
+            "query": "query SellerCopilotCreateSession($appName: String!, $displayName: String) {\n  sellerCopilot_createSession(appName: $appName, displayName: $displayName) {\n    id\n    appName\n    userId\n    __typename\n  }\n}\n",
+        }
+        create_session_headers = {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "operation": "query",
+            "operation-name": "SellerCopilotCreateSession",
+            "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
+            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/settings",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "sec-ch-ua": '"Google Chrome";v="153", "Not_A Brand";v="8", "Chromium";v="153"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "x-internal-env-type": "WEB",
+            "x-requested-with": "XMLHttpRequest",
         }
 
-        for attempt in range(1, max_copilot_attempts + 1):
-            # ALWAYS generate a clean, fresh session ID to prevent conversation context pollution
-            active_session_id = str(uuid.uuid4())
-            print(f"🆔 [API #4 Session ID (Attempt {attempt}/{max_copilot_attempts})] {active_session_id}")
+        created_session_id = ""
+        try:
+            print(f"🔄 [API #4 Step 1] Calling SellerCopilotCreateSession on {graphql_endpoint}...")
+            session_resp = self.api_client.post(
+                endpoint_or_url=graphql_endpoint,
+                json_data=create_session_payload,
+                headers=create_session_headers,
+                timeout=(8, 15),
+            )
+            if isinstance(session_resp, dict):
+                created_session_id = session_resp.get("data", {}).get("sellerCopilot_createSession", {}).get("id", "")
+                if created_session_id:
+                    print(f"✅ [API #4 Step 1] Created valid backend session ID: {created_session_id}")
+                else:
+                    print(f"ℹ️ [API #4 Step 1] CreateSession response: {session_resp}")
+        except Exception as cs_err:
+            print(f"⚠️ [API #4 Step 1 Warning] CreateSession error: {str(cs_err)}")
 
-            # Step 1: Pre-flight call (SellerCopilotGetSessions) to initialize Copilot surface
-            session_query_payload = {
-                "operationName": "SellerCopilotGetSessions",
-                "variables": {
+        if not created_session_id:
+            created_session_id = COPILOT_SESSION_ID or str(uuid.uuid4())
+            print(f"ℹ️ [API #4 Step 1 Fallback] Using fallback session ID: {created_session_id}")
+
+        # Step 2: Stream prompt through GraphQL SSE (sellerCopilot_runSseStream)
+        payload = {
+            "query": "subscription sellerCopilot_runSseStream($input: RunSseInput!) {\n  sellerCopilot_runSseStream(input: $input) {\n    data\n  }\n}\n",
+            "variables": {
+                "input": {
                     "appName": "setu_orchestrator_suv",
-                },
-                "query": "query SellerCopilotGetSessions($appName: String!) {\n  sellerCopilot_getSessions(appName: $appName) {\n    id\n    appName\n    userId\n    state\n    events\n    lastUpdateTime\n    __typename\n  }\n}\n",
-            }
-            session_headers = {
-                "accept": "*/*",
-                "content-type": "application/json",
-                "operation": "query",
-                "operation-name": "SellerCopilotGetSessions",
-                "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
-                "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/settings",
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-origin",
-                "sec-ch-ua": '"Google Chrome";v="153", "Not_A Brand";v="8", "Chromium";v="153"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
-                "x-internal-env-type": "WEB",
-                "x-requested-with": "XMLHttpRequest",
-            }
+                    "sessionId": created_session_id,
+                    "newMessage": {
+                        "role": "user",
+                        "parts": [{"text": prompt_text}],
+                    },
+                    "stateDelta": {"client_surface": "web"},
+                }
+            },
+            "operationName": "sellerCopilot_runSseStream",
+        }
 
-            try:
-                print(f"🔄 [API #4 Pre-flight] Calling SellerCopilotGetSessions on {graphql_endpoint}...")
-                self.api_client.post(
-                    endpoint_or_url=graphql_endpoint,
-                    json_data=session_query_payload,
-                    headers=session_headers,
-                    timeout=(8, 15),
-                )
-                print("✅ [API #4 Pre-flight] SellerCopilotGetSessions executed successfully.")
-            except Exception as pf_err:
-                print(f"ℹ️ [API #4 Pre-flight Notice] {str(pf_err)}")
+        headers = {
+            "Accept": "text/event-stream",
+            "Content-Type": "application/json; charset=utf-8",
+            "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
+            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/settings",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "sec-ch-ua": '"Google Chrome";v="153", "Not_A Brand";v="8", "Chromium";v="153"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "x-internal-env-type": "WEB",
+            "x-requested-with": "XMLHttpRequest",
+            "operation": "subscription",
+            "operation-name": "sellerCopilot_runSseStream",
+        }
 
-            # Step 2: Stream prompt through GraphQL SSE (sellerCopilot_runSseStream)
-            payload = {
-                "query": "subscription sellerCopilot_runSseStream($input: RunSseInput!) {\n  sellerCopilot_runSseStream(input: $input) {\n    data\n  }\n}\n",
-                "variables": {
-                    "input": {
-                        "appName": "setu_orchestrator_suv",
-                        "sessionId": active_session_id,
-                        "newMessage": {
-                            "role": "user",
-                            "parts": [{"text": prompt_text}],
-                        },
-                        "stateDelta": {"client_surface": "web"},
-                    }
-                },
-                "operationName": "sellerCopilot_runSseStream",
-            }
+        print(f"📦 [API #4 Variables] {json.dumps(payload.get('variables', {}), indent=2)}")
 
-            headers = {
-                "Accept": "text/event-stream",
-                "Content-Type": "application/json; charset=utf-8",
-                "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
-                "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/settings",
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-origin",
-                "sec-ch-ua": '"Google Chrome";v="153", "Not_A Brand";v="8", "Chromium";v="153"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
-                "x-internal-env-type": "WEB",
-                "x-requested-with": "XMLHttpRequest",
-                "operation": "subscription",
-                "operation-name": "sellerCopilot_runSseStream",
-            }
-
-            print(f"📦 [API #4 Variables] {json.dumps(payload.get('variables', {}), indent=2)}")
-
+        sse_response_text = ""
+        try:
+            sse_response_text = self.api_client.post_sse_stream(
+                endpoint_or_url=endpoint,
+                json_data=payload,
+                headers=headers,
+                timeout=(10, 60),
+            )
+        except Exception as e:
+            print(f"⚠️ [API #4 ERROR] Encountered issue for seller {customer_id}: {str(e)}")
+            logger.warning("API #4 encountered an error for customer %s (%s).", customer_id, str(e))
             sse_response_text = ""
-            try:
-                sse_response_text = self.api_client.post_sse_stream(
-                    endpoint_or_url=endpoint,
-                    json_data=payload,
-                    headers=headers,
-                    timeout=(10, 60),
-                )
-            except Exception as e:
-                print(f"⚠️ [API #4 ERROR] Encountered issue for seller {customer_id}: {str(e)}")
-                logger.warning("API #4 encountered an error for customer %s (%s).", customer_id, str(e))
-                sse_response_text = ""
 
-            if sse_response_text:
-                print(f"📋 [API #4 Raw Stream Response Preview ({len(sse_response_text)} chars)]:\n{sse_response_text[:400]}...")
-            else:
-                print("ℹ️ [API #4 Response] Empty response or no SSE stream data received.")
+        if sse_response_text:
+            print(f"📋 [API #4 Raw Stream Response Preview ({len(sse_response_text)} chars)]:\n{sse_response_text[:400]}...")
+        else:
+            print("ℹ️ [API #4 Response] Empty response or no SSE stream data received.")
 
-            metrics = self.parse_copilot_response(sse_response_text)
-            if metrics.get("gross_amount"):
-                print(f"✨ [API #4 SUCCESS] Successfully extracted GMV metrics on attempt {attempt}!")
-                break
-            elif attempt < max_copilot_attempts:
-                print(f"🔄 [API #4 Retry] No GMV data extracted on attempt {attempt}. Retrying with fresh session in 2s...")
-                time.sleep(2)
-
+        metrics = self.parse_copilot_response(sse_response_text)
         print(f"📊 [API #4 Parsed Metrics]:")
         print(f"   • Month:            {metrics.get('month') or '(empty)'}")
         print(f"   • Gross Amount GMV: {metrics.get('gross_amount') or '(empty)'}")
@@ -520,4 +511,3 @@ class API4Scraper:
             metrics.get("net_amount") or "-",
         )
         return metrics
-
