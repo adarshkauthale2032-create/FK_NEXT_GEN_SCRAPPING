@@ -20,7 +20,8 @@ class TestAPI1Scraper(unittest.TestCase):
         self.mock_client.get.return_value = {
             "result": {
                 "displayName": "Seller One",
-                "pickupAddressLine1": "Plot 42, Tech Park, Bangalore",
+                "pickupAddressLine1": "Plot 42, Tech Park,",
+                "pickupAddressLine2": "Phase 1, Bangalore",
                 "supportRole": {
                     "tier_type": "SUPPORT",
                     "role_name": None,
@@ -55,7 +56,7 @@ class TestAPI1Scraper(unittest.TestCase):
         self.assertEqual(res["account_status"], "ACTIVE")
         self.assertEqual(res["support_manager"], "No")
         self.assertEqual(res["seller_tier"], "Silver")
-        self.assertEqual(res["address"], "Plot 42, Tech Park, Bangalore")
+        self.assertEqual(res["address"], "Plot 42, Tech Park, Phase 1, Bangalore")
         self.assertEqual(res["signed_up_date"], "2022-01-15")
         self.assertEqual(res["live_date"], "2022-02-01")
 

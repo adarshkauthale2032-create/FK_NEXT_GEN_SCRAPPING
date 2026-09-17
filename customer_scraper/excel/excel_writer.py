@@ -534,7 +534,12 @@ class CSVWriter:
         account_status = data.get("account_status", "")
         support_manager = data.get("support_manager", "")
         seller_tier = data.get("seller_tier", "")
-        address = data.get("address") or data.get("pickupAddressLine1") or ""
+        address = data.get("address")
+        if not address:
+            line1 = str(data.get("pickupAddressLine1") or "").strip()
+            line2 = str(data.get("pickupAddressLine2") or "").strip()
+            address = " ".join([p for p in (line1, line2) if p and p.lower() not in ("null", "none")])
+
         signed_up_date = self._clean_date_str(data.get("signed_up_date", ""))
         live_date = self._clean_date_str(data.get("live_date", ""))
         approved_brand = data.get("approved_brand", "")
