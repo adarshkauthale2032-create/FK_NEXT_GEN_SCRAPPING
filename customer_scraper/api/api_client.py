@@ -297,25 +297,56 @@ class APIClient:
             retry_count = 0
             while retry_count < MAX_REQUEST_RETRIES:
                 try:
+                    print(f"📡 [API #4 SSE] Connecting to Setu Copilot stream for {full_url}...")
                     logger.debug("Executing SSE stream POST to %s (Attempt %d)", full_url, retry_count + 1)
                     response = session.post(
                         url=full_url,
                         json=json_data,
                         headers=req_headers,
-                        timeout=timeout,
+                        timeout=(8, 30),
                         stream=True,
                     )
+                    print(f"📥 [API #4 SSE] Response status: HTTP {response.status_code}")
 
                     if self.auth_manager.is_session_expired(response):
+                        print("⚠️ [API #4 SSE] Session expired!")
                         logger.warning("⚠️ [AUTH EXPIRED on SSE] Session expired on %s", full_url)
                         self.auth_manager.clear_session()
                         break
 
                     if response.status_code == 200:
                         lines = []
+                        start_t = time.time()
+                        max_stream_duration = 25  # Max 25s for stream reading
+                        event_count = 0
+
                         for chunk in response.iter_lines(decode_unicode=True):
                             if chunk is not None:
                                 lines.append(chunk)
+                                chunk_str = chunk.strip()
+
+                                if chunk_str.startswith("event:"):
+                                    event_count += 1
+
+                                # Termination conditions: server indicates completion or final non-partial message
+                                if chunk_str == "event: complete" or chunk_str == "data: [DONE]":
+                                    print(f"✅ [API #4 SSE] Received '{chunk_str}' -> Stream complete ({event_count} events).")
+                                    break
+
+                                if '"partial":false' in chunk_str or '"finishReason":"STOP"' in chunk_str:
+                                    print(f"✅ [API #4 SSE] Received final model message (partial: false / STOP) -> Stream complete.")
+                                    break
+
+                            if time.time() - start_t > max_stream_duration:
+                                print(f"⏱️ [API #4 SSE] Reached stream safety timeout ({max_stream_duration}s). Finishing read.")
+                                break
+
+                        try:
+                            response.close()
+                        except Exception:
+                            pass
+
+                        print(f"📦 [API #4 SSE] Collected {len(lines)} lines from stream in {round(time.time() - start_t, 2)}s.")
                         return "\n".join(lines)
 
                     if 400 <= response.status_code < 500:

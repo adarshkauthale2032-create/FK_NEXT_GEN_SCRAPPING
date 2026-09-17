@@ -159,6 +159,7 @@ class API4Scraper:
                             net_amt_list.append(n_amt)
                             cancelled_amt_list.append(c_amt)
 
+                        print(f"✨ [API #4] Successfully parsed Table with {len(months_list)} month(s) of GMV data.")
                         return {
                             "month": " | ".join(months_list),
                             "gross_amount": " | ".join(gross_amt_list),
@@ -272,6 +273,7 @@ class API4Scraper:
             "operation-name": "sellerCopilot_runSseStream",
         }
 
+        print(f"🤖 [API #4] Prompt: '{prompt_text}' for seller '{customer_id}'")
         try:
             sse_response_text = self.api_client.post_sse_stream(
                 endpoint_or_url=endpoint,
@@ -281,10 +283,12 @@ class API4Scraper:
         except (AuthExpiredError, NetworkConnectionError):
             raise
         except Exception as e:
+            print(f"⚠️ [API #4] Error fetching SSE for {customer_id}: {str(e)}")
             logger.warning("API #4 encountered an error for customer %s (%s). Proceeding with empty metrics.", customer_id, str(e))
             sse_response_text = ""
 
         metrics = self.parse_copilot_response(sse_response_text)
+        print(f"📊 [API #4 Result] Month: '{metrics.get('month') or '-'}' | GMV: '{metrics.get('gross_amount') or '-'}' | Net: '{metrics.get('net_amount') or '-'}'")
         logger.info(
             "API #4 parsed for %s -> Month: '%s', GMV: '%s', Net: '%s'",
             customer_id,
