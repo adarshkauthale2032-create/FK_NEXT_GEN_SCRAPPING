@@ -20,7 +20,7 @@ import uuid
 
 from api.api_client import APIClient, NetworkConnectionError
 from auth.auth_manager import AuthExpiredError
-from config.settings import API4_ENDPOINT, COPILOT_SESSION_ID
+from config.settings import API4_ENDPOINT, API4_GRAPHQL_ENDPOINT, COPILOT_SESSION_ID
 
 logger = logging.getLogger("customer_scraper")
 
@@ -59,15 +59,17 @@ class API4Scraper:
 
     def parse_copilot_response(self, sse_text: str) -> Dict[str, str]:
         """
-        Parses the raw SSE text output from sellerCopilot_runSseStream to extract GMV table metrics.
+        Parses the raw SSE text output from sellerCopilot_runSseStream or getSessionById
+        to extract GMV table metrics. Supports both horizontal (Month-by-month) and
+        vertical (Metric-Value) table formats.
 
         Returns:
             Dict containing:
-                month: str (e.g. "June 2026 | July 2026 | August 2026")
-                gross_amount: str (e.g. "₹915 | ₹1,603 | ₹6,313")
-                gross_units: str (e.g. "1 | 1 | 4")
-                net_amount: str (e.g. "₹0 | ₹1,603 | ₹3,082")
-                cancelled_amount: str (e.g. "₹915 | ₹0 | ₹4,692")
+                month: str
+                gross_amount: str
+                gross_units: str
+                net_amount: str
+                cancelled_amount: str
         """
         if not sse_text or not sse_text.strip():
             return {
@@ -78,10 +80,29 @@ class API4Scraper:
                 "cancelled_amount": "",
             }
 
-        # 1. Collect all complete model message texts from SSE data lines
         accumulated_text = ""
         raw_function_results: List[str] = []
 
+        # Check if entire sse_text is already a raw JSON response (e.g. from getSessionById)
+        clean_text = sse_text.strip()
+        if clean_text.startswith("{") and clean_text.endswith("}"):
+            try:
+                raw_json = json.loads(clean_text)
+                events = raw_json.get("data", {}).get("sellerCopilot_getSessionById", {}).get("events", [])
+                for ev in events:
+                    parts = ev.get("content", {}).get("parts", []) if isinstance(ev.get("content"), dict) else []
+                    for part in parts:
+                        if isinstance(part, dict):
+                            t = part.get("text", "")
+                            if t:
+                                accumulated_text += t + "\n"
+                            fn_resp = part.get("functionResponse", {}).get("response", {}).get("result", "")
+                            if fn_resp:
+                                raw_function_results.append(str(fn_resp))
+            except Exception:
+                accumulated_text += clean_text + "\n"
+
+        # Collect text from SSE data stream lines
         for line in sse_text.splitlines():
             line = line.strip()
             if not line.startswith("data:"):
@@ -101,27 +122,50 @@ class API4Scraper:
             parts = content.get("parts", [])
             for part in parts:
                 if isinstance(part, dict):
-                    # Check for direct text
                     txt = part.get("text", "")
                     if txt:
                         accumulated_text += txt
-                    # Check for tool function response
                     fn_resp = part.get("functionResponse", {}).get("response", {}).get("result", "")
                     if fn_resp:
                         raw_function_results.append(str(fn_resp))
 
         # 2. Primary parsing: Extract ```ui-json Table block
-        table_match = re.search(r"```ui-json\s*(\{[\s\S]*?\})\s*```", accumulated_text)
-        if table_match:
+        table_matches = re.findall(r"```ui-json\s*(\{[\s\S]*?\})\s*```", accumulated_text)
+        for table_json_str in table_matches:
             try:
-                table_json_str = table_match.group(1)
                 table_obj = json.loads(table_json_str)
                 if table_obj.get("component") == "Table":
                     columns = [str(c).strip() for c in table_obj.get("columns", [])]
                     cells = [str(c).strip() for c in table_obj.get("cells", [])]
                     num_cols = len(columns)
+
+                    # Format A: Vertical Key-Value Table (e.g. columns = ["Metric", "Value"])
+                    if num_cols == 2 and any("metric" in c.lower() for c in columns):
+                        metric_map = {}
+                        for r_start in range(0, len(cells), 2):
+                            if r_start + 1 < len(cells):
+                                k = cells[r_start].strip().lower()
+                                v = cells[r_start + 1].strip()
+                                metric_map[k] = v
+
+                        g_amt = metric_map.get("gross gmv") or metric_map.get("gross amount") or metric_map.get("gross amount (gmv)") or ""
+                        g_u = metric_map.get("gross units") or ""
+                        n_amt = metric_map.get("net amount") or ""
+                        c_amt = metric_map.get("cancellation amount") or metric_map.get("cancelled amount") or ""
+                        m_val = metric_map.get("month") or "August 2026"
+
+                        if g_amt or g_u or n_amt:
+                            print(f"✨ [API #4] Successfully parsed Vertical Key-Value Table component.")
+                            return {
+                                "month": m_val,
+                                "gross_amount": g_amt,
+                                "gross_units": g_u,
+                                "net_amount": n_amt,
+                                "cancelled_amount": c_amt,
+                            }
+
+                    # Format B: Multi-Month Horizontal Table (columns = ["Month", "Gross Amount (GMV)", ...])
                     if num_cols > 0 and len(cells) >= num_cols:
-                        # Map columns by lowercase name
                         col_indices: Dict[str, int] = {}
                         for idx, col in enumerate(columns):
                             c_low = col.lower()
@@ -149,24 +193,25 @@ class API4Scraper:
 
                             m_val = row_cells[col_indices["month"]] if "month" in col_indices and col_indices["month"] < len(row_cells) else ""
                             g_amt = row_cells[col_indices["gross_amount"]] if "gross_amount" in col_indices and col_indices["gross_amount"] < len(row_cells) else ""
-                            g_unit = row_cells[col_indices["gross_units"]] if "gross_units" in col_indices and col_indices["gross_units"] < len(row_cells) else ""
+                            g_u = row_cells[col_indices["gross_units"]] if "gross_units" in col_indices and col_indices["gross_units"] < len(row_cells) else ""
                             n_amt = row_cells[col_indices["net_amount"]] if "net_amount" in col_indices and col_indices["net_amount"] < len(row_cells) else ""
                             c_amt = row_cells[col_indices["cancelled_amount"]] if "cancelled_amount" in col_indices and col_indices["cancelled_amount"] < len(row_cells) else ""
 
                             months_list.append(m_val)
                             gross_amt_list.append(g_amt)
-                            gross_units_list.append(g_unit)
+                            gross_units_list.append(g_u)
                             net_amt_list.append(n_amt)
                             cancelled_amt_list.append(c_amt)
 
-                        print(f"✨ [API #4] Successfully parsed Table with {len(months_list)} month(s) of GMV data.")
-                        return {
-                            "month": " | ".join(months_list),
-                            "gross_amount": " | ".join(gross_amt_list),
-                            "gross_units": " | ".join(gross_units_list),
-                            "net_amount": " | ".join(net_amt_list),
-                            "cancelled_amount": " | ".join(cancelled_amt_list),
-                        }
+                        if gross_amt_list:
+                            print(f"✨ [API #4] Successfully parsed Horizontal Table with {len(months_list)} month(s) of GMV data.")
+                            return {
+                                "month": " | ".join(months_list),
+                                "gross_amount": " | ".join(gross_amt_list),
+                                "gross_units": " | ".join(gross_units_list),
+                                "net_amount": " | ".join(net_amt_list),
+                                "cancelled_amount": " | ".join(cancelled_amt_list),
+                            }
             except Exception as e:
                 logger.debug("Failed parsing ui-json Table block: %s", str(e))
 
@@ -184,31 +229,29 @@ class API4Scraper:
                     header = [h.strip() for h in csv_lines[0].split(",")]
                     h_map = {h: i for i, h in enumerate(header)}
 
-                    # If monthly interval
-                    if "MONTH" in raw_res or "monthly" in raw_res.lower():
-                        for r_line in csv_lines[1:]:
-                            if r_line.startswith("==="):
-                                break
-                            parts = [p.strip() for p in r_line.split(",")]
-                            if len(parts) >= len(header):
-                                ts = parts[h_map.get("timestamp", -1)] if "timestamp" in h_map else ""
-                                g_amt = parts[h_map.get("gross_amount", -1)] if "gross_amount" in h_map else "0"
-                                g_u = parts[h_map.get("gross_units", -1)] if "gross_units" in h_map else "0"
-                                n_amt = parts[h_map.get("net_amount", -1)] if "net_amount" in h_map else "0"
-                                c_amt = parts[h_map.get("cancellation_amount", -1)] if "cancellation_amount" in h_map else "0"
+                    for r_line in csv_lines[1:]:
+                        if r_line.startswith("==="):
+                            break
+                        parts = [p.strip() for p in r_line.split(",")]
+                        if len(parts) >= len(header):
+                            ts = parts[h_map.get("timestamp", -1)] if "timestamp" in h_map else ""
+                            g_amt = parts[h_map.get("gross_amount", -1)] if "gross_amount" in h_map else "0"
+                            g_u = parts[h_map.get("gross_units", -1)] if "gross_units" in h_map else "0"
+                            n_amt = parts[h_map.get("net_amount", -1)] if "net_amount" in h_map else "0"
+                            c_amt = parts[h_map.get("cancellation_amount", -1)] if "cancellation_amount" in h_map else "0"
 
-                                m_label = ts
-                                try:
-                                    dt = datetime.datetime.strptime(ts, "%Y-%m-%d")
-                                    m_label = dt.strftime("%B %Y")
-                                except Exception:
-                                    pass
+                            m_label = ts
+                            try:
+                                dt = datetime.datetime.strptime(ts, "%Y-%m-%d")
+                                m_label = dt.strftime("%B %Y")
+                            except Exception:
+                                pass
 
-                                months_list.append(m_label)
-                                gross_amt_list.append(f"₹{int(float(g_amt)):,}" if g_amt.replace(".", "", 1).isdigit() else g_amt)
-                                gross_units_list.append(str(int(float(g_u))) if g_u.replace(".", "", 1).isdigit() else g_u)
-                                net_amt_list.append(f"₹{int(float(n_amt)):,}" if n_amt.replace(".", "", 1).isdigit() else n_amt)
-                                cancelled_amt_list.append(f"₹{int(float(c_amt)):,}" if c_amt.replace(".", "", 1).isdigit() else c_amt)
+                            months_list.append(m_label)
+                            gross_amt_list.append(f"₹{int(float(g_amt)):,}" if g_amt.replace(".", "", 1).isdigit() else g_amt)
+                            gross_units_list.append(str(int(float(g_u))) if g_u.replace(".", "", 1).isdigit() else g_u)
+                            net_amt_list.append(f"₹{int(float(n_amt)):,}" if n_amt.replace(".", "", 1).isdigit() else n_amt)
+                            cancelled_amt_list.append(f"₹{int(float(c_amt)):,}" if c_amt.replace(".", "", 1).isdigit() else c_amt)
 
             if months_list:
                 return {
@@ -229,7 +272,7 @@ class API4Scraper:
 
     def get_seller_gmv_metrics(self, customer_id: str, base_date: Optional[datetime.date] = None) -> Dict[str, str]:
         """
-        Executes API #4 (Setu Copilot SSE stream) for a seller and returns the 5 GMV metrics.
+        Executes API #4 (Setu Copilot Session + SSE stream) for a seller and returns the 5 GMV metrics.
 
         Returns:
             Dict containing:
@@ -244,8 +287,46 @@ class API4Scraper:
         prompt_text = f"{m_names[0]}, {m_names[1]} and {m_names[2]} GMV Data"
 
         endpoint = API4_ENDPOINT.format(customer_id=customer_id)
+        graphql_endpoint = API4_GRAPHQL_ENDPOINT.format(customer_id=customer_id)
         logger.info("API #4 (Setu Copilot SSE) started for %s (Prompt: '%s')", customer_id, prompt_text)
 
+        print("\n" + "=" * 30 + f" [DEBUGGING 4TH API START: {customer_id}] " + "=" * 30)
+        print(f"🔗 [API #4 Endpoint] {endpoint}")
+        print(f"📝 [API #4 Prompt]   \"{prompt_text}\"")
+        print(f"🆔 [API #4 Session]  {COPILOT_SESSION_ID}")
+
+        # Step 1: Pre-flight call to query / initialize the session
+        session_query_payload = {
+            "operationName": "SellerCopilotGetSessionById",
+            "variables": {
+                "appName": "setu_orchestrator_suv",
+                "sessionId": COPILOT_SESSION_ID,
+            },
+            "query": "query SellerCopilotGetSessionById($appName: String!, $sessionId: String!) {\n  sellerCopilot_getSessionById(appName: $appName, sessionId: $sessionId) {\n    id\n    appName\n    userId\n    state\n    lastUpdateTime\n    events {\n      id\n      invocationId\n      author\n      timestamp\n      partial\n      finishReason\n      longRunningToolIds\n      content\n      actions\n      usageMetadata\n      customMetadata\n      __typename\n    }\n    __typename\n  }\n}\n",
+        }
+        session_headers = {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "operation": "query",
+            "operation-name": "SellerCopilotGetSessionById",
+            "x-internal-env-type": "WEB",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/settings",
+        }
+
+        try:
+            print(f"🔄 [API #4 Pre-flight] Calling SellerCopilotGetSessionById on {graphql_endpoint}...")
+            session_resp = self.api_client.post(
+                endpoint_or_url=graphql_endpoint,
+                json_data=session_query_payload,
+                headers=session_headers,
+                timeout=(8, 15),
+            )
+            print("✅ [API #4 Pre-flight] SellerCopilotGetSessionById executed successfully.")
+        except Exception as pf_err:
+            print(f"ℹ️ [API #4 Pre-flight Notice] {str(pf_err)}")
+
+        # Step 2: Stream prompt through GraphQL SSE
         payload = {
             "query": "subscription sellerCopilot_runSseStream($input: RunSseInput!) {\n  sellerCopilot_runSseStream(input: $input) {\n    data\n  }\n}",
             "variables": {
@@ -273,9 +354,6 @@ class API4Scraper:
             "operation-name": "sellerCopilot_runSseStream",
         }
 
-        print("\n" + "=" * 30 + f" [DEBUGGING 4TH API START: {customer_id}] " + "=" * 30)
-        print(f"🔗 [API #4 Endpoint] {endpoint}")
-        print(f"📝 [API #4 Prompt]   \"{prompt_text}\"")
         print(f"📦 [API #4 Variables] {json.dumps(payload.get('variables', {}), indent=2)}")
 
         sse_response_text = ""
