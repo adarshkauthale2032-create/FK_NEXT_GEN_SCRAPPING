@@ -108,7 +108,7 @@ GENERIC_EMAIL_DOMAINS = {
     "gmx.com",
 }
 
-# CSV / Excel Column Definitions (Preserving strict order - 23 Columns)
+# CSV / Excel Column Definitions (Preserving strict order - 25 Columns)
 CSV_COLUMNS = [
     "Sr No",
     "Customer ID",
@@ -116,12 +116,14 @@ CSV_COLUMNS = [
     "Account Status",
     "Support Manager",
     "Seller Tier",
+    "Address",
     "Signed Up Date",
     "Live Date",
     "Approved Brand",
     "Actual Brand Count",
     "Request ID",
     "Brand Name",
+    "Vertical Name",
     "Brand Owner",
     "Document Type",
     "Brand Website Link",
@@ -135,4 +137,5 @@ CSV_COLUMNS = [
     "isD2C",
 ]
 EXCEL_COLUMNS = CSV_COLUMNS  # Backward compatibility alias
+
 

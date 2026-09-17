@@ -62,8 +62,9 @@ class TestCSVWriter(unittest.TestCase):
         self.assertEqual(row_vals[3], "ACTIVE")  # Account Status
         self.assertEqual(row_vals[4], "Yes")  # Support Manager
         self.assertEqual(row_vals[5], "Gold")  # Seller Tier
-        self.assertEqual(row_vals[6], "2021-01-01")
-        self.assertEqual(row_vals[7], "2021-01-15")
+        self.assertEqual(row_vals[6], "")      # Address
+        self.assertEqual(row_vals[7], "2021-01-01")
+        self.assertEqual(row_vals[8], "2021-01-15")
 
     def test_append_customer_support_manager_no_with_brands(self):
         cust_data = {
@@ -74,8 +75,10 @@ class TestCSVWriter(unittest.TestCase):
             "actual_brand_count": 15,
             "support_manager": "No",
             "seller_tier": "Silver",
+            "address": "123 Market Road, Bangalore",
             "signed_up_date": "2022-03-10",
             "live_date": "2022-03-20",
+            "vertical_name": "Footwear",
             "mobile_number": "9876543210",
             "registered_mobile_number": "9876543211",
             "email_id": "contact@retail.com",
@@ -96,20 +99,22 @@ class TestCSVWriter(unittest.TestCase):
         self.assertEqual(row_vals[3], "ACTIVE")
         self.assertEqual(row_vals[4], "No")
         self.assertEqual(row_vals[5], "Silver")
-        self.assertEqual(row_vals[6], "2022-03-10")
-        self.assertEqual(row_vals[7], "2022-03-20")
-        self.assertEqual(row_vals[8], "26")
-        self.assertEqual(row_vals[9], "15")
-        self.assertEqual(row_vals[10], "")            # Request ID
-        self.assertEqual(row_vals[11], "")            # Brand Name
-        self.assertEqual(row_vals[15], "")            # Instagram URL
-        self.assertEqual(row_vals[16], "")            # Instagram Followers
-        self.assertEqual(row_vals[17], "9876543210")  # Mobile Number
-        self.assertEqual(row_vals[18], "9876543211")  # Registered Mobile Number
-        self.assertEqual(row_vals[19], "contact@retail.com")
-        self.assertEqual(row_vals[20], "reg@retail.com")
-        self.assertEqual(row_vals[21], "Yes")         # Unique Email
-        self.assertEqual(row_vals[22], "Yes")         # retail.com is custom domain -> isD2C = Yes
+        self.assertEqual(row_vals[6], "123 Market Road, Bangalore")  # Address
+        self.assertEqual(row_vals[7], "2022-03-10")
+        self.assertEqual(row_vals[8], "2022-03-20")
+        self.assertEqual(row_vals[9], "26")
+        self.assertEqual(row_vals[10], "15")
+        self.assertEqual(row_vals[11], "")            # Request ID
+        self.assertEqual(row_vals[12], "")            # Brand Name
+        self.assertEqual(row_vals[13], "Footwear")    # Vertical Name
+        self.assertEqual(row_vals[17], "")            # Instagram URL
+        self.assertEqual(row_vals[18], "")            # Instagram Followers
+        self.assertEqual(row_vals[19], "9876543210")  # Mobile Number
+        self.assertEqual(row_vals[20], "9876543211")  # Registered Mobile Number
+        self.assertEqual(row_vals[21], "contact@retail.com")
+        self.assertEqual(row_vals[22], "reg@retail.com")
+        self.assertEqual(row_vals[23], "Yes")         # Unique Email
+        self.assertEqual(row_vals[24], "Yes")         # retail.com is custom domain -> isD2C = Yes
 
     def test_get_completed_customer_ids(self):
         cust1 = {"customer_id": "ID_AAA", "support_manager": "Yes"}

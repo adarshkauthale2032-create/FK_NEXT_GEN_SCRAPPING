@@ -513,6 +513,7 @@ def main():
                     account_status = api1_data.get("account_status", "")
                     support_mgr = api1_data.get("support_manager", "No")
                     tier = api1_data.get("seller_tier", "")
+                    address = api1_data.get("address", "")
 
                     # Step 2: Execute API #2 (Brand Approval, Actual Brand Count & QnA Questions)
                     api2_data = api2.get_brand_approval_details(customer_id)
@@ -520,6 +521,7 @@ def main():
                     actual_brand_count = api2_data.get("actual_brand_count", 0)
                     request_id = api2_data.get("request_id", "")
                     brand_name = api2_data.get("brand_name", "")
+                    vertical_name = api2_data.get("vertical_name") or api2_data.get("vertical", "")
                     brand_owner = api2_data.get("brand_owner", "")
                     document_type = api2_data.get("document_type", "")
                     brand_website_link = api2_data.get("brand_website_link", "")
@@ -610,8 +612,8 @@ def main():
                             d2c_no_count += 1
 
                         logger.info(
-                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Appr: %s | Act: %s | ReqID: %s | Brand: %s | BrOwner: %s | Doc: %s | Web: %s | Insta: %s | Followers: %s | UniqEmail: %s | isD2C: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
-                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, approved_brand, actual_brand_count, request_id or "-", brand_name or "-", brand_owner or "-", document_type or "-", brand_website_link or "-", instagram_url or "-", instagram_followers or "-", unique_email, is_d2c_str, total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
+                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Tier: %s | Addr: %s | Appr: %s | Act: %s | ReqID: %s | Brand: %s | Vertical: %s | BrOwner: %s | Doc: %s | Web: %s | Insta: %s | Followers: %s | UniqEmail: %s | isD2C: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
+                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, tier, address or "-", approved_brand, actual_brand_count, request_id or "-", brand_name or "-", vertical_name or "-", brand_owner or "-", document_type or "-", brand_website_link or "-", instagram_url or "-", instagram_followers or "-", unique_email, is_d2c_str, total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
                         )
                         if total_saved_in_session % 100 == 0:
                             logger.info(

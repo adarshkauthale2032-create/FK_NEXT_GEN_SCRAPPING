@@ -59,7 +59,7 @@ class CSVWriter:
         if self.excel_path:
             self._ensure_excel_file_exists(self.excel_path)
 
-        # Automatically check and migrate all output datasets to match master 23-column schema
+        # Automatically check and migrate all output datasets to match master 25-column schema
         self.verify_and_migrate_all_datasets()
 
     def verify_and_migrate_all_datasets(self) -> None:
@@ -196,7 +196,7 @@ class CSVWriter:
 
                 wb.close()
 
-                # Recreate workbook with styled 23-column header and mapped data rows
+                # Recreate workbook with styled 25-column header and mapped data rows
                 new_wb = openpyxl.Workbook()
                 new_ws = new_wb.active
                 new_ws.title = "Scraped Data"
@@ -221,11 +221,11 @@ class CSVWriter:
                     cell.alignment = header_align
                     cell.border = thin_border
 
-                # Set column widths
+                # Set column widths (25 columns)
                 col_widths = {
-                    1: 8, 2: 20, 3: 25, 4: 18, 5: 16, 6: 14, 7: 15, 8: 15,
-                    9: 16, 10: 18, 11: 18, 12: 22, 13: 16, 14: 16, 15: 32,
-                    16: 35, 17: 20, 18: 18, 19: 24, 20: 25, 21: 28, 22: 14, 23: 12,
+                    1: 8, 2: 20, 3: 25, 4: 18, 5: 16, 6: 14, 7: 30, 8: 15, 9: 15,
+                    10: 16, 11: 18, 12: 18, 13: 22, 14: 20, 15: 16, 16: 16, 17: 32,
+                    18: 35, 19: 20, 20: 18, 21: 24, 22: 25, 23: 28, 24: 14, 25: 12,
                 }
                 for c_idx, width in col_widths.items():
                     col_letter = openpyxl.utils.get_column_letter(c_idx)
@@ -302,7 +302,7 @@ class CSVWriter:
                 cell.alignment = header_align
                 cell.border = thin_border
 
-            # Column widths (23 columns)
+            # Column widths (25 columns)
             col_widths = {
                 1: 8,   # Sr No
                 2: 20,  # Customer ID
@@ -310,23 +310,25 @@ class CSVWriter:
                 4: 18,  # Account Status
                 5: 16,  # Support Manager
                 6: 14,  # Seller Tier
-                7: 15,  # Signed Up Date
-                8: 15,  # Live Date
-                9: 16,  # Approved Brand
-                10: 18, # Actual Brand Count
-                11: 18, # Request ID
-                12: 22, # Brand Name
-                13: 16, # Brand Owner
-                14: 16, # Document Type
-                15: 32, # Brand Website Link
-                16: 35, # Instagram URL
-                17: 20, # Instagram Followers
-                18: 18, # Mobile Number
-                19: 24, # Registered Mobile Number
-                20: 25, # Email ID
-                21: 28, # Registered Email ID
-                22: 14, # Unique Email
-                23: 12, # isD2C
+                7: 30,  # Address
+                8: 15,  # Signed Up Date
+                9: 15,  # Live Date
+                10: 16, # Approved Brand
+                11: 18, # Actual Brand Count
+                12: 18, # Request ID
+                13: 22, # Brand Name
+                14: 20, # Vertical Name
+                15: 16, # Brand Owner
+                16: 16, # Document Type
+                17: 32, # Brand Website Link
+                18: 35, # Instagram URL
+                19: 20, # Instagram Followers
+                20: 18, # Mobile Number
+                21: 24, # Registered Mobile Number
+                22: 25, # Email ID
+                23: 28, # Registered Email ID
+                24: 14, # Unique Email
+                25: 12, # isD2C
             }
             for col_idx, width in col_widths.items():
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
@@ -532,12 +534,14 @@ class CSVWriter:
         account_status = data.get("account_status", "")
         support_manager = data.get("support_manager", "")
         seller_tier = data.get("seller_tier", "")
+        address = data.get("address") or data.get("pickupAddressLine1") or ""
         signed_up_date = self._clean_date_str(data.get("signed_up_date", ""))
         live_date = self._clean_date_str(data.get("live_date", ""))
         approved_brand = data.get("approved_brand", "")
         actual_brand_count = data.get("actual_brand_count", "")
         request_id = data.get("request_id", "")
         brand_name = data.get("brand_name") or data.get("brand") or data.get("brandName") or ""
+        vertical_name = data.get("vertical_name") or data.get("vertical") or data.get("verticalName") or ""
         brand_owner = data.get("brand_owner", "")
         document_type = data.get("document_type", "")
         brand_website_link = data.get("brand_website_link", "")
@@ -591,12 +595,14 @@ class CSVWriter:
             account_status,
             support_manager,
             seller_tier,
+            address,
             signed_up_date,
             live_date,
             approved_brand,
             actual_brand_count,
             request_id,
             brand_name,
+            vertical_name,
             brand_owner,
             document_type,
             brand_website_link,
