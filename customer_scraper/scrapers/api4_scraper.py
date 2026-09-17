@@ -3,7 +3,7 @@ API #4 Scraper: Seller Copilot GraphQL SSE (Monthly GMV Metrics).
 
 Fetches monthly aggregated GMV metrics for the preceding 3 calendar months (excluding current month)
 via GraphQL SSE stream (/sellerDashboard/napi/graphql-sse), parses the structured Table component
-from the streaming response, and extracts:
+and tool function responses, and extracts:
 - Month
 - Gross Amount (GMV)
 - Gross Units
@@ -59,9 +59,9 @@ class API4Scraper:
 
     def parse_copilot_response(self, sse_text: str) -> Dict[str, str]:
         """
-        Parses the raw SSE text output from sellerCopilot_runSseStream or getSessionById
-        to extract GMV table metrics. Supports both horizontal (Month-by-month) and
-        vertical (Metric-Value) table formats.
+        Parses the raw SSE text output from sellerCopilot_runSseStream or getSessions/getSessionById
+        to extract GMV table metrics. Supports multi-month horizontal tables, vertical key-value tables,
+        and parses functionResponse CSV metrics as supplemental/fallback data.
 
         Returns:
             Dict containing:
@@ -83,7 +83,7 @@ class API4Scraper:
         accumulated_text = ""
         raw_function_results: List[str] = []
 
-        # Check if entire sse_text is already a raw JSON response (e.g. from getSessionById)
+        # Check if entire sse_text is already a raw JSON response
         clean_text = sse_text.strip()
         if clean_text.startswith("{") and clean_text.endswith("}"):
             try:
@@ -102,7 +102,7 @@ class API4Scraper:
             except Exception:
                 accumulated_text += clean_text + "\n"
 
-        # Collect text from SSE data stream lines
+        # Collect text and function responses from SSE data stream lines
         for line in sse_text.splitlines():
             line = line.strip()
             if not line.startswith("data:"):
@@ -129,7 +129,66 @@ class API4Scraper:
                     if fn_resp:
                         raw_function_results.append(str(fn_resp))
 
-        # 2. Primary parsing: Extract ```ui-json Table block
+        # Parse fallback CSV metrics from functionResponse if present
+        fn_metrics_by_month: Dict[str, Dict[str, str]] = {}
+        if raw_function_results:
+            for raw_res in raw_function_results:
+                csv_lines = [l.strip() for l in raw_res.splitlines() if l.strip() and not l.startswith("=")]
+                if len(csv_lines) >= 2 and "gross_amount" in csv_lines[0]:
+                    header = [h.strip() for h in csv_lines[0].split(",")]
+                    h_map = {h: i for i, h in enumerate(header)}
+
+                    for r_line in csv_lines[1:]:
+                        if r_line.startswith("==="):
+                            break
+                        parts = [p.strip() for p in r_line.split(",")]
+                        if len(parts) >= len(header):
+                            ts = parts[h_map.get("timestamp", -1)] if "timestamp" in h_map else ""
+                            g_amt = parts[h_map.get("gross_amount", -1)] if "gross_amount" in h_map else ""
+                            g_u = parts[h_map.get("gross_units", -1)] if "gross_units" in h_map else ""
+                            n_amt = parts[h_map.get("net_amount", -1)] if "net_amount" in h_map else ""
+                            c_amt = parts[h_map.get("cancellation_amount", -1)] if "cancellation_amount" in h_map else ""
+
+                            m_label = ts
+                            try:
+                                dt = datetime.datetime.strptime(ts, "%Y-%m-%d")
+                                m_label = dt.strftime("%B %Y")
+                            except Exception:
+                                pass
+
+                            def format_currency(val_str: str) -> str:
+                                if not val_str:
+                                    return ""
+                                if any(curr in val_str for curr in ("₹", "Cr", "Lakh", "k")):
+                                    return val_str if val_str.startswith("₹") else f"₹{val_str}"
+                                try:
+                                    num = float(val_str.replace(",", ""))
+                                    if num >= 10000000:
+                                        return f"₹{num / 10000000:.2f} Cr"
+                                    elif num >= 100000:
+                                        return f"₹{num / 100000:.2f} Lakh"
+                                    return f"₹{int(num):,}"
+                                except Exception:
+                                    return val_str
+
+                            def format_units(val_str: str) -> str:
+                                if not val_str:
+                                    return ""
+                                try:
+                                    return f"{int(float(val_str.replace(',', ''))):,}"
+                                except Exception:
+                                    return val_str
+
+                            if m_label:
+                                fn_metrics_by_month[m_label.lower()] = {
+                                    "month": m_label,
+                                    "gross_amount": format_currency(g_amt),
+                                    "gross_units": format_units(g_u),
+                                    "net_amount": format_currency(n_amt),
+                                    "cancelled_amount": format_currency(c_amt),
+                                }
+
+        # Primary parsing: Extract ```ui-json Table block
         table_matches = re.findall(r"```ui-json\s*(\{[\s\S]*?\})\s*```", accumulated_text)
         for table_json_str in table_matches:
             try:
@@ -148,14 +207,13 @@ class API4Scraper:
                                 v = cells[r_start + 1].strip()
                                 metric_map[k] = v
 
-                        g_amt = metric_map.get("gross gmv") or metric_map.get("gross amount") or metric_map.get("gross amount (gmv)") or ""
+                        g_amt = metric_map.get("gross gmv") or metric_map.get("gross amount") or metric_map.get("gross amount (gmv)") or metric_map.get("gmv (gross amount)") or ""
                         g_u = metric_map.get("gross units") or ""
                         n_amt = metric_map.get("net amount") or ""
                         c_amt = metric_map.get("cancellation amount") or metric_map.get("cancelled amount") or ""
-                        m_val = metric_map.get("month") or "August 2026"
+                        m_val = metric_map.get("month") or ""
 
                         if g_amt or g_u or n_amt:
-                            print(f"✨ [API #4] Successfully parsed Vertical Key-Value Table component.")
                             return {
                                 "month": m_val,
                                 "gross_amount": g_amt,
@@ -164,7 +222,7 @@ class API4Scraper:
                                 "cancelled_amount": c_amt,
                             }
 
-                    # Format B: Multi-Month Horizontal Table (columns = ["Month", "Gross Amount (GMV)", ...])
+                    # Format B: Multi-Month Horizontal Table (columns = ["Month", "GMV (Gross Amount)", ...])
                     if num_cols > 0 and len(cells) >= num_cols:
                         col_indices: Dict[str, int] = {}
                         for idx, col in enumerate(columns):
@@ -173,9 +231,9 @@ class API4Scraper:
                                 col_indices["month"] = idx
                             elif "gross amount" in c_low or "gmv" in c_low:
                                 col_indices["gross_amount"] = idx
-                            elif "gross unit" in c_low:
+                            elif "gross unit" in c_low or "unit" in c_low:
                                 col_indices["gross_units"] = idx
-                            elif "net amount" in c_low:
+                            elif "net" in c_low:
                                 col_indices["net_amount"] = idx
                             elif "cancel" in c_low:
                                 col_indices["cancelled_amount"] = idx
@@ -197,6 +255,17 @@ class API4Scraper:
                             n_amt = row_cells[col_indices["net_amount"]] if "net_amount" in col_indices and col_indices["net_amount"] < len(row_cells) else ""
                             c_amt = row_cells[col_indices["cancelled_amount"]] if "cancelled_amount" in col_indices and col_indices["cancelled_amount"] < len(row_cells) else ""
 
+                            # If Net Amount or Cancelled Amount are missing from UI table, supplement from functionResponse
+                            if not n_amt or not c_amt:
+                                m_key = m_val.lower()
+                                for fn_key, fn_vals in fn_metrics_by_month.items():
+                                    if fn_key in m_key or m_key in fn_key:
+                                        if not n_amt and fn_vals.get("net_amount"):
+                                            n_amt = fn_vals["net_amount"]
+                                        if not c_amt and fn_vals.get("cancelled_amount"):
+                                            c_amt = fn_vals["cancelled_amount"]
+                                        break
+
                             months_list.append(m_val)
                             gross_amt_list.append(g_amt)
                             gross_units_list.append(g_u)
@@ -204,7 +273,6 @@ class API4Scraper:
                             cancelled_amt_list.append(c_amt)
 
                         if gross_amt_list:
-                            print(f"✨ [API #4] Successfully parsed Horizontal Table with {len(months_list)} month(s) of GMV data.")
                             return {
                                 "month": " | ".join(months_list),
                                 "gross_amount": " | ".join(gross_amt_list),
@@ -215,52 +283,21 @@ class API4Scraper:
             except Exception as e:
                 logger.debug("Failed parsing ui-json Table block: %s", str(e))
 
-        # 3. Fallback parsing: If ui-json block wasn't found, check raw functionResponse CSV data
-        if raw_function_results:
-            months_list = []
-            gross_amt_list = []
-            gross_units_list = []
-            net_amt_list = []
-            cancelled_amt_list = []
+        # Fallback parsing: If ui-json block wasn't found, build directly from functionResponse metrics
+        if fn_metrics_by_month:
+            months_list = [v["month"] for v in fn_metrics_by_month.values()]
+            gross_amt_list = [v["gross_amount"] for v in fn_metrics_by_month.values()]
+            gross_units_list = [v["gross_units"] for v in fn_metrics_by_month.values()]
+            net_amt_list = [v["net_amount"] for v in fn_metrics_by_month.values()]
+            cancelled_amt_list = [v["cancelled_amount"] for v in fn_metrics_by_month.values()]
 
-            for raw_res in raw_function_results:
-                csv_lines = [l.strip() for l in raw_res.splitlines() if l.strip() and not l.startswith("=")]
-                if len(csv_lines) >= 2 and "gross_amount" in csv_lines[0]:
-                    header = [h.strip() for h in csv_lines[0].split(",")]
-                    h_map = {h: i for i, h in enumerate(header)}
-
-                    for r_line in csv_lines[1:]:
-                        if r_line.startswith("==="):
-                            break
-                        parts = [p.strip() for p in r_line.split(",")]
-                        if len(parts) >= len(header):
-                            ts = parts[h_map.get("timestamp", -1)] if "timestamp" in h_map else ""
-                            g_amt = parts[h_map.get("gross_amount", -1)] if "gross_amount" in h_map else "0"
-                            g_u = parts[h_map.get("gross_units", -1)] if "gross_units" in h_map else "0"
-                            n_amt = parts[h_map.get("net_amount", -1)] if "net_amount" in h_map else "0"
-                            c_amt = parts[h_map.get("cancellation_amount", -1)] if "cancellation_amount" in h_map else "0"
-
-                            m_label = ts
-                            try:
-                                dt = datetime.datetime.strptime(ts, "%Y-%m-%d")
-                                m_label = dt.strftime("%B %Y")
-                            except Exception:
-                                pass
-
-                            months_list.append(m_label)
-                            gross_amt_list.append(f"₹{int(float(g_amt)):,}" if g_amt.replace(".", "", 1).isdigit() else g_amt)
-                            gross_units_list.append(str(int(float(g_u))) if g_u.replace(".", "", 1).isdigit() else g_u)
-                            net_amt_list.append(f"₹{int(float(n_amt)):,}" if n_amt.replace(".", "", 1).isdigit() else n_amt)
-                            cancelled_amt_list.append(f"₹{int(float(c_amt)):,}" if c_amt.replace(".", "", 1).isdigit() else c_amt)
-
-            if months_list:
-                return {
-                    "month": " | ".join(months_list),
-                    "gross_amount": " | ".join(gross_amt_list),
-                    "gross_units": " | ".join(gross_units_list),
-                    "net_amount": " | ".join(net_amt_list),
-                    "cancelled_amount": " | ".join(cancelled_amt_list),
-                }
+            return {
+                "month": " | ".join(months_list),
+                "gross_amount": " | ".join(gross_amt_list),
+                "gross_units": " | ".join(gross_units_list),
+                "net_amount": " | ".join(net_amt_list),
+                "cancelled_amount": " | ".join(cancelled_amt_list),
+            }
 
         return {
             "month": "",
@@ -284,7 +321,7 @@ class API4Scraper:
         """
         months = get_last_three_months(base_date=base_date)
         m_names = [m[0] for m in months]
-        prompt_text = f"{m_names[0]}, {m_names[1]} and {m_names[2]} GMV Data"
+        prompt_text = f"GMV for {m_names[0]} {m_names[1]} and {m_names[2]} month"
 
         endpoint = API4_ENDPOINT.format(customer_id=customer_id)
         graphql_endpoint = API4_GRAPHQL_ENDPOINT.format(customer_id=customer_id)
@@ -293,46 +330,67 @@ class API4Scraper:
         print("\n" + "=" * 30 + f" [DEBUGGING 4TH API START: {customer_id}] " + "=" * 30)
         print(f"🔗 [API #4 Endpoint] {endpoint}")
         print(f"📝 [API #4 Prompt]   \"{prompt_text}\"")
-        print(f"🆔 [API #4 Session]  {COPILOT_SESSION_ID}")
 
-        # Step 1: Pre-flight call to query / initialize the session
+        # Step 1: Pre-flight call (SellerCopilotGetSessions)
+        active_session_id = COPILOT_SESSION_ID
         session_query_payload = {
-            "operationName": "SellerCopilotGetSessionById",
+            "operationName": "SellerCopilotGetSessions",
             "variables": {
                 "appName": "setu_orchestrator_suv",
-                "sessionId": COPILOT_SESSION_ID,
             },
-            "query": "query SellerCopilotGetSessionById($appName: String!, $sessionId: String!) {\n  sellerCopilot_getSessionById(appName: $appName, sessionId: $sessionId) {\n    id\n    appName\n    userId\n    state\n    lastUpdateTime\n    events {\n      id\n      invocationId\n      author\n      timestamp\n      partial\n      finishReason\n      longRunningToolIds\n      content\n      actions\n      usageMetadata\n      customMetadata\n      __typename\n    }\n    __typename\n  }\n}\n",
+            "query": "query SellerCopilotGetSessions($appName: String!) {\n  sellerCopilot_getSessions(appName: $appName) {\n    id\n    appName\n    userId\n    state\n    events\n    lastUpdateTime\n    __typename\n  }\n}\n",
         }
         session_headers = {
             "accept": "*/*",
             "content-type": "application/json",
             "operation": "query",
-            "operation-name": "SellerCopilotGetSessionById",
-            "x-internal-env-type": "WEB",
-            "X-Requested-With": "XMLHttpRequest",
+            "operation-name": "SellerCopilotGetSessions",
+            "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
             "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/settings",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "sec-ch-ua": '"Google Chrome";v="153", "Not_A Brand";v="8", "Chromium";v="153"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "x-internal-env-type": "WEB",
+            "x-requested-with": "XMLHttpRequest",
         }
 
         try:
-            print(f"🔄 [API #4 Pre-flight] Calling SellerCopilotGetSessionById on {graphql_endpoint}...")
+            print(f"🔄 [API #4 Pre-flight] Calling SellerCopilotGetSessions on {graphql_endpoint}...")
             session_resp = self.api_client.post(
                 endpoint_or_url=graphql_endpoint,
                 json_data=session_query_payload,
                 headers=session_headers,
                 timeout=(8, 15),
             )
-            print("✅ [API #4 Pre-flight] SellerCopilotGetSessionById executed successfully.")
+            if isinstance(session_resp, dict):
+                sessions_list = session_resp.get("data", {}).get("sellerCopilot_getSessions", [])
+                if isinstance(sessions_list, list) and len(sessions_list) > 0:
+                    first_sess = sessions_list[0]
+                    if isinstance(first_sess, dict) and first_sess.get("id"):
+                        active_session_id = str(first_sess["id"]).strip()
+                        print(f"✅ [API #4 Pre-flight] Retrieved existing session ID: {active_session_id}")
+                    else:
+                        print("ℹ️ [API #4 Pre-flight] Session response received without explicit ID.")
+                else:
+                    active_session_id = str(uuid.uuid4())
+                    print(f"ℹ️ [API #4 Pre-flight] No prior sessions found. Generated session ID: {active_session_id}")
+            else:
+                print("✅ [API #4 Pre-flight] SellerCopilotGetSessions executed.")
         except Exception as pf_err:
             print(f"ℹ️ [API #4 Pre-flight Notice] {str(pf_err)}")
 
-        # Step 2: Stream prompt through GraphQL SSE
+        print(f"🆔 [API #4 Session ID] {active_session_id}")
+
+        # Step 2: Stream prompt through GraphQL SSE (sellerCopilot_runSseStream)
         payload = {
-            "query": "subscription sellerCopilot_runSseStream($input: RunSseInput!) {\n  sellerCopilot_runSseStream(input: $input) {\n    data\n  }\n}",
+            "query": "subscription sellerCopilot_runSseStream($input: RunSseInput!) {\n  sellerCopilot_runSseStream(input: $input) {\n    data\n  }\n}\n",
             "variables": {
                 "input": {
                     "appName": "setu_orchestrator_suv",
-                    "sessionId": COPILOT_SESSION_ID,
+                    "sessionId": active_session_id,
                     "newMessage": {
                         "role": "user",
                         "parts": [{"text": prompt_text}],
@@ -348,6 +406,12 @@ class API4Scraper:
             "Content-Type": "application/json; charset=utf-8",
             "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
             "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/settings",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "sec-ch-ua": '"Google Chrome";v="153", "Not_A Brand";v="8", "Chromium";v="153"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
             "x-internal-env-type": "WEB",
             "x-requested-with": "XMLHttpRequest",
             "operation": "subscription",

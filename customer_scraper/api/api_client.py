@@ -333,13 +333,9 @@ class APIClient:
                                 if chunk_str.startswith("event:"):
                                     event_count += 1
 
-                                # Termination conditions: server indicates completion or final non-partial message
+                                # Termination conditions: server indicates completion marker
                                 if chunk_str == "event: complete" or chunk_str == "data: [DONE]":
                                     print(f"✅ [API #4 SSE] Stream completion marker received ('{chunk_str}').")
-                                    break
-
-                                if '"partial":false' in chunk_str or '"finishReason":"STOP"' in chunk_str:
-                                    print(f"✅ [API #4 SSE] Final response model chunk received (STOP / partial: false).")
                                     break
 
                             if time.time() - start_t > max_stream_duration:
