@@ -111,7 +111,7 @@ GENERIC_EMAIL_DOMAINS = {
     "gmx.com",
 }
 
-# CSV / Excel Column Definitions (Preserving strict order - 32 Columns)
+# CSV / Excel Column Definitions (Preserving strict order - 31 Columns)
 CSV_COLUMNS = [
     "Sr No",
     "Customer ID",
@@ -130,7 +130,6 @@ CSV_COLUMNS = [
     "Brand Owner",
     "Document Type",
     "Listing Count",
-    "Status",
     "Brand Website Link",
     "Instagram URL",
     "Instagram Followers",

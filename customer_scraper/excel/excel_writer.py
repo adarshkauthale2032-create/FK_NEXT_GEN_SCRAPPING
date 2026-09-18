@@ -221,13 +221,13 @@ class CSVWriter:
                     cell.alignment = header_align
                     cell.border = thin_border
 
-                # Set column widths (32 columns)
+                # Set column widths (31 columns)
                 col_widths = {
                     1: 8, 2: 20, 3: 25, 4: 18, 5: 16, 6: 14, 7: 35, 8: 15, 9: 15,
                     10: 16, 11: 18, 12: 18, 13: 22, 14: 25, 15: 16, 16: 16,
-                    17: 18, 18: 20, 19: 32, 20: 35, 21: 20, 22: 18,
-                    23: 24, 24: 25, 25: 28, 26: 14, 27: 12, 28: 30, 29: 25,
-                    30: 15, 31: 25, 32: 25,
+                    17: 18, 18: 32, 19: 35, 20: 20, 21: 18,
+                    22: 24, 23: 25, 24: 28, 25: 14, 26: 12, 27: 30, 28: 25,
+                    29: 15, 30: 25, 31: 25,
                 }
                 for c_idx, width in col_widths.items():
                     col_letter = openpyxl.utils.get_column_letter(c_idx)
@@ -304,7 +304,7 @@ class CSVWriter:
                 cell.alignment = header_align
                 cell.border = thin_border
 
-            # Set column widths (32 columns)
+            # Set column widths (31 columns)
             col_widths = {
                 1: 8,   # Sr No
                 2: 20,  # Customer ID
@@ -323,21 +323,20 @@ class CSVWriter:
                 15: 16, # Brand Owner
                 16: 16, # Document Type
                 17: 18, # Listing Count
-                18: 20, # Status
-                19: 32, # Brand Website Link
-                20: 35, # Instagram URL
-                21: 20, # Instagram Followers
-                22: 18, # Mobile Number
-                23: 24, # Registered Mobile Number
-                24: 25, # Email ID
-                25: 28, # Registered Email ID
-                26: 14, # Unique Email
-                27: 12, # isD2C
-                28: 30, # Month
-                29: 25, # Gross Amount (GMV)
-                30: 15, # Gross Units
-                31: 25, # Net Amount
-                32: 25, # Cancelled Amount
+                18: 32, # Brand Website Link
+                19: 35, # Instagram URL
+                20: 20, # Instagram Followers
+                21: 18, # Mobile Number
+                22: 24, # Registered Mobile Number
+                23: 25, # Email ID
+                24: 28, # Registered Email ID
+                25: 14, # Unique Email
+                26: 12, # isD2C
+                27: 30, # Month
+                28: 25, # Gross Amount (GMV)
+                29: 15, # Gross Units
+                30: 25, # Net Amount
+                31: 25, # Cancelled Amount
             }
             for col_idx, width in col_widths.items():
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
@@ -610,7 +609,6 @@ class CSVWriter:
         cancelled_amount = data.get("cancelled_amount", "")
 
         listing_count = data.get("listing_count", "") or data.get("active_listings", "")
-        status = data.get("status", "")
 
         brands_details = data.get("brands_details") or []
         if brands_details and isinstance(brands_details, list) and len(brands_details) > 0:
@@ -622,7 +620,6 @@ class CSVWriter:
                 brand_owner = first_brand.get("brand_owner") or brand_owner
                 document_type = first_brand.get("document_type") or document_type
                 listing_count = first_brand.get("listing_count") or first_brand.get("active_listings") or listing_count
-                status = first_brand.get("status") or status
                 brand_website_link = first_brand.get("brand_website_link") or brand_website_link
 
         main_row = [
@@ -643,7 +640,6 @@ class CSVWriter:
             brand_owner,
             document_type,
             listing_count,
-            status,
             brand_website_link,
             instagram_url,
             instagram_followers,
@@ -685,21 +681,20 @@ class CSVWriter:
                     b_item.get("brand_owner", ""),              # 14: Brand Owner
                     b_item.get("document_type", ""),            # 15: Document Type
                     b_item.get("listing_count", "") or b_item.get("active_listings", ""), # 16: Listing Count
-                    b_item.get("status", ""),                   # 17: Status
-                    "",  # 18: Brand Website Link
-                    "",  # 19: Instagram URL
-                    "",  # 20: Instagram Followers
-                    "",  # 21: Mobile Number
-                    "",  # 22: Registered Mobile Number
-                    "",  # 23: Email ID
-                    "",  # 24: Registered Email ID
-                    "",  # 25: Unique Email
-                    "",  # 26: isD2C
-                    "",  # 27: Month
-                    "",  # 28: Gross Amount (GMV)
-                    "",  # 29: Gross Units
-                    "",  # 30: Net Amount
-                    "",  # 31: Cancelled Amount
+                    "",  # 17: Brand Website Link
+                    "",  # 18: Instagram URL
+                    "",  # 19: Instagram Followers
+                    "",  # 20: Mobile Number
+                    "",  # 21: Registered Mobile Number
+                    "",  # 22: Email ID
+                    "",  # 23: Registered Email ID
+                    "",  # 24: Unique Email
+                    "",  # 25: isD2C
+                    "",  # 26: Month
+                    "",  # 27: Gross Amount (GMV)
+                    "",  # 28: Gross Units
+                    "",  # 29: Net Amount
+                    "",  # 30: Cancelled Amount
                 ]
                 rows.append(sub_row)
 

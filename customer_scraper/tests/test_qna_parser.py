@@ -217,13 +217,13 @@ class TestQnAParser(unittest.TestCase):
         self.assertEqual(puma_safety_details["vertical_name"], "Watches")
 
 
-class TestExcelWriter32Columns(unittest.TestCase):
+class TestExcelWriter31Columns(unittest.TestCase):
     def setUp(self):
         self.writer = CSVWriter()
 
-    def test_format_customer_rows_32_columns(self):
-        """Tests that formatted row has exactly 32 columns matching CSV_COLUMNS."""
-        self.assertEqual(len(CSV_COLUMNS), 32)
+    def test_format_customer_rows_31_columns(self):
+        """Tests that formatted row has exactly 31 columns matching CSV_COLUMNS."""
+        self.assertEqual(len(CSV_COLUMNS), 31)
 
         data = {
             "customer_id": "c1234567890",
@@ -242,7 +242,6 @@ class TestExcelWriter32Columns(unittest.TestCase):
             "brand_owner": "Yes",
             "document_type": "TM",
             "listing_count": "50+",
-            "status": "Active",
             "brand_website_link": "https://brand.com",
             "instagram_url": "https://www.instagram.com/testenterprise/",
             "mobile_number": "9876543210",
@@ -261,7 +260,7 @@ class TestExcelWriter32Columns(unittest.TestCase):
         rows = self.writer._format_customer_rows(data, sr_no=1)
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(len(row), 32)
+        self.assertEqual(len(row), 31)
 
         # Check column values in order
         self.assertEqual(row[0], 1)                   # Sr No
@@ -281,21 +280,20 @@ class TestExcelWriter32Columns(unittest.TestCase):
         self.assertEqual(row[14], "Yes")              # Brand Owner
         self.assertEqual(row[15], "TM")               # Document Type
         self.assertEqual(row[16], "50+")              # Listing Count
-        self.assertEqual(row[17], "Active")           # Status
-        self.assertEqual(row[18], "https://brand.com")# Brand Website Link
-        self.assertEqual(row[19], "https://www.instagram.com/testenterprise/") # Instagram URL
-        self.assertEqual(row[20], "")                 # Instagram Followers
-        self.assertEqual(row[21], "9876543210")       # Mobile Number
-        self.assertEqual(row[22], "9876543210")       # Registered Mobile Number
-        self.assertEqual(row[23], "info@brand.com")   # Email ID
-        self.assertEqual(row[24], "contact@brand.com")# Registered Email ID
-        self.assertEqual(row[25], "Yes")              # Unique Email
-        self.assertEqual(row[26], "Yes")              # isD2C
-        self.assertEqual(row[27], "June 2026")        # Month
-        self.assertEqual(row[28], "₹10,000")          # Gross Amount (GMV)
-        self.assertEqual(row[29], "5")                # Gross Units
-        self.assertEqual(row[30], "₹8,000")           # Net Amount
-        self.assertEqual(row[31], "₹2,000")           # Cancelled Amount
+        self.assertEqual(row[17], "https://brand.com")# Brand Website Link
+        self.assertEqual(row[18], "https://www.instagram.com/testenterprise/") # Instagram URL
+        self.assertEqual(row[19], "")                 # Instagram Followers
+        self.assertEqual(row[20], "9876543210")       # Mobile Number
+        self.assertEqual(row[21], "9876543210")       # Registered Mobile Number
+        self.assertEqual(row[22], "info@brand.com")   # Email ID
+        self.assertEqual(row[23], "contact@brand.com")# Registered Email ID
+        self.assertEqual(row[24], "Yes")              # Unique Email
+        self.assertEqual(row[25], "Yes")              # isD2C
+        self.assertEqual(row[26], "June 2026")        # Month
+        self.assertEqual(row[27], "₹10,000")          # Gross Amount (GMV)
+        self.assertEqual(row[28], "5")                # Gross Units
+        self.assertEqual(row[29], "₹8,000")           # Net Amount
+        self.assertEqual(row[30], "₹2,000")           # Cancelled Amount
 
     def test_format_customer_rows_non_d2c_record(self):
         """Tests that non-D2C records are properly formatted with isD2C = 'No' and saved."""
@@ -316,7 +314,6 @@ class TestExcelWriter32Columns(unittest.TestCase):
             "brand_owner": "",
             "document_type": "",
             "listing_count": "",
-            "status": "",
             "brand_website_link": "",
             "instagram_url": "",
             "instagram_followers": "",
@@ -331,26 +328,25 @@ class TestExcelWriter32Columns(unittest.TestCase):
         rows = self.writer._format_customer_rows(data, sr_no=2)
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(len(row), 32)
+        self.assertEqual(len(row), 31)
         self.assertEqual(row[0], 2)
         self.assertEqual(row[1], "c9876543210")
         self.assertEqual(row[6], "")      # Address
         self.assertEqual(row[12], "")     # Brand Name
         self.assertEqual(row[13], "")     # Vertical Name
         self.assertEqual(row[16], "")     # Listing Count
-        self.assertEqual(row[17], "")     # Status
-        self.assertEqual(row[19], "")     # Instagram URL
-        self.assertEqual(row[20], "")     # Instagram Followers
-        self.assertEqual(row[25], "No")   # Unique Email
-        self.assertEqual(row[26], "No")   # isD2C
-        self.assertEqual(row[27], "")     # Month
-        self.assertEqual(row[28], "")     # Gross Amount
+        self.assertEqual(row[18], "")     # Instagram URL
+        self.assertEqual(row[19], "")     # Instagram Followers
+        self.assertEqual(row[24], "No")   # Unique Email
+        self.assertEqual(row[25], "No")   # isD2C
+        self.assertEqual(row[26], "")     # Month
+        self.assertEqual(row[27], "")     # Gross Amount
 
     def test_format_customer_rows_multiple_brands_3_rows(self):
         """
         Tests that when a seller has 3 brands in brands_details:
-        - Row 1: Fully filled with seller details and Brand 1 info + listing count & status.
-        - Rows 2 and 3: Blank except for the brand columns (Request ID, Brand Name, Vertical Name, Brand Owner, Document Type, Listing Count, Status).
+        - Row 1: Fully filled with seller details and Brand 1 info + listing count.
+        - Rows 2 and 3: Blank except for the brand columns (Request ID, Brand Name, Vertical Name, Brand Owner, Document Type, Listing Count).
         """
         data = {
             "customer_id": "c111222333",
@@ -372,7 +368,6 @@ class TestExcelWriter32Columns(unittest.TestCase):
                     "brand_owner": "Yes",
                     "document_type": "TM",
                     "listing_count": "50+",
-                    "status": "Active",
                     "brand_website_link": "https://ibell.com",
                 },
                 {
@@ -382,7 +377,6 @@ class TestExcelWriter32Columns(unittest.TestCase):
                     "brand_owner": "No",
                     "document_type": "BAL",
                     "listing_count": "4",
-                    "status": "Active",
                     "brand_website_link": "",
                 },
                 {
@@ -392,7 +386,6 @@ class TestExcelWriter32Columns(unittest.TestCase):
                     "brand_owner": "No",
                     "document_type": "OTHER",
                     "listing_count": "0",
-                    "status": "No Active Listings",
                     "brand_website_link": "",
                 },
             ],
@@ -416,7 +409,7 @@ class TestExcelWriter32Columns(unittest.TestCase):
 
         # Row 1 (Full Row)
         row1 = rows[0]
-        self.assertEqual(len(row1), 32)
+        self.assertEqual(len(row1), 31)
         self.assertEqual(row1[0], 1)                   # Sr No
         self.assertEqual(row1[1], "c111222333")        # Customer ID
         self.assertEqual(row1[2], "Multi Brand Seller")# Account Name
@@ -427,15 +420,14 @@ class TestExcelWriter32Columns(unittest.TestCase):
         self.assertEqual(row1[14], "Yes")              # Brand Owner
         self.assertEqual(row1[15], "TM")               # Document Type
         self.assertEqual(row1[16], "50+")              # Listing Count
-        self.assertEqual(row1[17], "Active")           # Status
-        self.assertEqual(row1[18], "https://ibell.com")# Brand Website Link
-        self.assertEqual(row1[19], "https://instagram.com/ibell")
-        self.assertEqual(row1[26], "Yes")              # isD2C
-        self.assertEqual(row1[28], "₹50,000")          # Gross Amount (GMV)
+        self.assertEqual(row1[17], "https://ibell.com")# Brand Website Link
+        self.assertEqual(row1[18], "https://instagram.com/ibell")
+        self.assertEqual(row1[25], "Yes")              # isD2C
+        self.assertEqual(row1[27], "₹50,000")          # Gross Amount (GMV)
 
         # Row 2 (Brand Two: only brand columns filled, rest 25 empty)
         row2 = rows[1]
-        self.assertEqual(len(row2), 32)
+        self.assertEqual(len(row2), 31)
         self.assertEqual(row2[0], "")                  # Sr No is empty
         self.assertEqual(row2[1], "")                  # Customer ID is empty
         self.assertEqual(row2[2], "")                  # Account Name is empty
@@ -446,15 +438,14 @@ class TestExcelWriter32Columns(unittest.TestCase):
         self.assertEqual(row2[14], "No")               # Brand Owner
         self.assertEqual(row2[15], "BAL")              # Document Type
         self.assertEqual(row2[16], "4")                # Listing Count
-        self.assertEqual(row2[17], "Active")           # Status
-        self.assertEqual(row2[18], "")                 # Website Link is empty
-        self.assertEqual(row2[19], "")                 # Instagram URL is empty
-        self.assertEqual(row2[26], "")                 # isD2C is empty
-        self.assertEqual(row2[28], "")                 # GMV is empty
+        self.assertEqual(row2[17], "")                 # Website Link is empty
+        self.assertEqual(row2[18], "")                 # Instagram URL is empty
+        self.assertEqual(row2[25], "")                 # isD2C is empty
+        self.assertEqual(row2[27], "")                 # GMV is empty
 
         # Row 3 (Brand Three: only brand columns filled, rest 25 empty)
         row3 = rows[2]
-        self.assertEqual(len(row3), 32)
+        self.assertEqual(len(row3), 31)
         self.assertEqual(row3[0], "")                  # Sr No is empty
         self.assertEqual(row3[1], "")                  # Customer ID is empty
         self.assertEqual(row3[11], "REQ_003")          # Request ID
@@ -463,9 +454,8 @@ class TestExcelWriter32Columns(unittest.TestCase):
         self.assertEqual(row3[14], "No")               # Brand Owner
         self.assertEqual(row3[15], "OTHER")            # Document Type
         self.assertEqual(row3[16], "0")
-        self.assertEqual(row3[17], "No Active Listings")
-        self.assertEqual(row3[18], "")
-        self.assertEqual(row3[26], "")
+        self.assertEqual(row3[17], "")
+        self.assertEqual(row3[25], "")
 
 
 if __name__ == "__main__":

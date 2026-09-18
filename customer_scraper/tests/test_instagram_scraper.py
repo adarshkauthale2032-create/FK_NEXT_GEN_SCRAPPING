@@ -149,15 +149,15 @@ class TestInstagramScraperMocked(unittest.TestCase):
         self.assertEqual(details["instagram_followers"], "")
 
 
-class TestExcelWriter32Columns(unittest.TestCase):
+class TestExcelWriter31Columns(unittest.TestCase):
     def setUp(self):
         self.writer = CSVWriter()
 
-    def test_format_customer_rows_32_columns_with_instagram_followers(self):
-        """Tests that formatted row has exactly 32 columns and Instagram Followers is at index 20."""
-        self.assertEqual(len(CSV_COLUMNS), 32)
-        self.assertEqual(CSV_COLUMNS[19], "Instagram URL")
-        self.assertEqual(CSV_COLUMNS[20], "Instagram Followers")
+    def test_format_customer_rows_31_columns_with_instagram_followers(self):
+        """Tests that formatted row has exactly 31 columns and Instagram Followers is at index 19."""
+        self.assertEqual(len(CSV_COLUMNS), 31)
+        self.assertEqual(CSV_COLUMNS[18], "Instagram URL")
+        self.assertEqual(CSV_COLUMNS[19], "Instagram Followers")
 
         data = {
             "customer_id": "c111222333444",
@@ -176,7 +176,6 @@ class TestExcelWriter32Columns(unittest.TestCase):
             "brand_owner": "No",
             "document_type": "OTHER",  # Not BAL/TM
             "listing_count": "50+",
-            "status": "Active",
             "brand_website_link": "",   # No website link
             "instagram_url": "https://www.instagram.com/instaseller_official/",  # Instagram found!
             "instagram_followers": "125K",  # Followers count!
@@ -191,7 +190,7 @@ class TestExcelWriter32Columns(unittest.TestCase):
         rows = self.writer._format_customer_rows(data, sr_no=5)
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(len(row), 32)
+        self.assertEqual(len(row), 31)
 
         self.assertEqual(row[0], 5)                                         # Sr No
         self.assertEqual(row[1], "c111222333444")                           # Customer ID
@@ -200,11 +199,11 @@ class TestExcelWriter32Columns(unittest.TestCase):
         self.assertEqual(row[12], "Insta Brand")                            # Brand Name
         self.assertEqual(row[13], "Fashion")                                # Vertical Name
         self.assertEqual(row[16], "50+")                                    # Listing Count
-        self.assertEqual(row[17], "Active")                                 # Status
-        self.assertEqual(row[19], "https://www.instagram.com/instaseller_official/") # Instagram URL
-        self.assertEqual(row[20], "125K")                                   # Instagram Followers
-        self.assertEqual(row[25], "No")                                     # Unique Email
-        self.assertEqual(row[26], "Yes")                                    # isD2C (Triggered by Instagram!)
+        self.assertEqual(row[17], "")                                       # Brand Website Link
+        self.assertEqual(row[18], "https://www.instagram.com/instaseller_official/") # Instagram URL
+        self.assertEqual(row[19], "125K")                                   # Instagram Followers
+        self.assertEqual(row[24], "No")                                     # Unique Email
+        self.assertEqual(row[25], "Yes")                                    # isD2C (Triggered by Instagram!)
 
 
 if __name__ == "__main__":
