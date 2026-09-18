@@ -151,6 +151,71 @@ class TestQnAParser(unittest.TestCase):
         self.assertTrue(res["brand_is_d2c"])
         self.assertEqual(len(res["brands_details"]), 1)
 
+    def test_multiple_verticals_aggregated_comma_separated(self):
+        """
+        Tests that when a brand has 6 requests across 6 different verticals,
+        all 6 vertical names are aggregated with commas for that brand,
+        while other brands retain their single vertical name.
+        Total approved = 10, Actual brand count = 5.
+        """
+        # Mock requestsV2-count -> APPROVED: 10
+        self.mock_client.get.side_effect = [
+            {"APPROVED": 10},
+            {"sections": {}},  # QnA for Puma
+            {"sections": {}},  # QnA for Nike
+            {"sections": {}},  # QnA for Adidas
+            {"sections": {}},  # QnA for Reebok
+            {"sections": {}},  # QnA for Puma Safety
+        ]
+
+        # 10 records: 6 for Puma, 1 each for Nike, Adidas, Reebok, Puma Safety
+        self.mock_client.post.return_value = [
+            {"request_id": "REQ1", "brand_name": "Puma", "vertical": "Casual Shoes", "request_status": "Approved"},
+            {"request_id": "REQ2", "brand_name": "Puma", "vertical": "Sports Shoes", "request_status": "Approved"},
+            {"request_id": "REQ3", "brand_name": "Puma", "vertical": "Socks", "request_status": "Approved"},
+            {"request_id": "REQ4", "brand_name": "Puma", "vertical": "T-Shirts", "request_status": "Approved"},
+            {"request_id": "REQ5", "brand_name": "Puma", "vertical": "Trackpants", "request_status": "Approved"},
+            {"request_id": "REQ6", "brand_name": "Puma", "vertical": "Backpacks", "request_status": "Approved"},
+            {"request_id": "REQ7", "brand_name": "Nike", "vertical": "Footwear", "request_status": "Approved"},
+            {"request_id": "REQ8", "brand_name": "Adidas", "vertical": "Apparel", "request_status": "Approved"},
+            {"request_id": "REQ9", "brand_name": "Reebok", "vertical": "Luggage", "request_status": "Approved"},
+            {"request_id": "REQ10", "brand_name": "Puma Safety", "vertical": "Watches", "request_status": "Approved"},
+        ]
+
+        res = self.scraper.get_brand_approval_details("seller_10_brands")
+
+        self.assertEqual(res["approved_brand"], 10)
+        self.assertEqual(res["actual_brand_count"], 5)
+        self.assertEqual(len(res["brands_details"]), 5)
+
+        # Brand 1: Puma -> 6 comma-separated verticals
+        puma_details = res["brands_details"][0]
+        self.assertEqual(puma_details["brand_name"], "Puma")
+        self.assertEqual(
+            puma_details["vertical_name"],
+            "Casual Shoes, Sports Shoes, Socks, T-Shirts, Trackpants, Backpacks"
+        )
+
+        # Brand 2: Nike -> 1 vertical
+        nike_details = res["brands_details"][1]
+        self.assertEqual(nike_details["brand_name"], "Nike")
+        self.assertEqual(nike_details["vertical_name"], "Footwear")
+
+        # Brand 3: Adidas -> 1 vertical
+        adidas_details = res["brands_details"][2]
+        self.assertEqual(adidas_details["brand_name"], "Adidas")
+        self.assertEqual(adidas_details["vertical_name"], "Apparel")
+
+        # Brand 4: Reebok -> 1 vertical
+        reebok_details = res["brands_details"][3]
+        self.assertEqual(reebok_details["brand_name"], "Reebok")
+        self.assertEqual(reebok_details["vertical_name"], "Luggage")
+
+        # Brand 5: Puma Safety -> 1 vertical
+        puma_safety_details = res["brands_details"][4]
+        self.assertEqual(puma_safety_details["brand_name"], "Puma Safety")
+        self.assertEqual(puma_safety_details["vertical_name"], "Watches")
+
 
 class TestExcelWriter30Columns(unittest.TestCase):
     def setUp(self):

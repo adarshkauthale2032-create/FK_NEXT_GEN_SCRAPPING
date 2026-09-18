@@ -245,6 +245,7 @@ class API2Scraper:
         # Group request IDs by unique brand name (case-insensitive)
         brand_requests_map: Dict[str, List[str]] = {}
         brand_display_names: Dict[str, str] = {}
+        brand_to_verticals_map: Dict[str, List[str]] = {}
         req_to_brand_map: Dict[str, str] = {}
         req_to_vertical_map: Dict[str, str] = {}
 
@@ -299,6 +300,10 @@ class API2Scraper:
                 if brand_key not in brand_requests_map:
                     brand_requests_map[brand_key] = []
                     brand_display_names[brand_key] = brand_clean
+                    brand_to_verticals_map[brand_key] = []
+
+                if vertical_clean and vertical_clean not in brand_to_verticals_map[brand_key]:
+                    brand_to_verticals_map[brand_key].append(vertical_clean)
 
                 if req_id and req_id.lower() not in ("null", "none"):
                     req_to_brand_map[req_id] = brand_clean
@@ -307,6 +312,7 @@ class API2Scraper:
                         brand_requests_map[brand_key].append(req_id)
 
         self._last_brand_display_names = brand_display_names
+        self._last_brand_to_verticals_map = brand_to_verticals_map
         self._last_req_to_brand_map = req_to_brand_map
         self._last_req_to_vertical_map = req_to_vertical_map
 
@@ -329,7 +335,7 @@ class API2Scraper:
         3. Calls QnA API (questionsV2) for all unique brands to extract:
            - Request ID
            - Brand Name
-           - Vertical Name
+           - Vertical Name (all associated verticals for the brand joined with comma)
            - Brand Owner
            - Document Type
            - Brand Website Link
@@ -352,6 +358,7 @@ class API2Scraper:
         """
         # Reset instance variables explicitly per seller call
         self._last_brand_display_names = {}
+        self._last_brand_to_verticals_map = {}
         self._last_req_to_brand_map = {}
         self._last_req_to_vertical_map = {}
 
@@ -381,6 +388,7 @@ class API2Scraper:
         )
 
         brand_display_names = getattr(self, "_last_brand_display_names", {})
+        brand_to_verticals_map = getattr(self, "_last_brand_to_verticals_map", {})
         req_to_brand_map = getattr(self, "_last_req_to_brand_map", {})
         req_to_vertical_map = getattr(self, "_last_req_to_vertical_map", {})
 
@@ -390,6 +398,8 @@ class API2Scraper:
         # Iterate sequentially over ALL unique brands and query QnA per unique brand
         for brand_key, req_ids in brand_requests_map.items():
             current_brand_display = brand_display_names.get(brand_key, brand_key)
+            all_verticals = brand_to_verticals_map.get(brand_key, [])
+            joined_verticals = ", ".join(all_verticals) if all_verticals else ""
             brand_entry: Optional[Dict[str, str]] = None
 
             for req_id in req_ids:
@@ -401,7 +411,7 @@ class API2Scraper:
                 web_link = qna_res.get("brand_website_link", "").strip()
                 b_owner = qna_res.get("brand_owner", "").strip()
                 b_name = req_to_brand_map.get(req_id, current_brand_display)
-                v_name = req_to_vertical_map.get(req_id, "")
+                v_name = joined_verticals or req_to_vertical_map.get(req_id, "")
 
                 # Check D2C eligibility conditions from Brand verification
                 is_doc_match = doc_type.upper() in ("BAL", "TM")
@@ -442,11 +452,10 @@ class API2Scraper:
                     break
 
             if brand_entry is None:
-                v_name = next((v for r, v in req_to_vertical_map.items() if req_to_brand_map.get(r) == current_brand_display), "")
                 brand_entry = {
                     "request_id": "",
                     "brand_name": current_brand_display,
-                    "vertical_name": v_name,
+                    "vertical_name": joined_verticals,
                     "brand_owner": "",
                     "document_type": "",
                     "brand_website_link": "",
