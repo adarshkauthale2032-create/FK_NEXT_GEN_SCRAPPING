@@ -558,13 +558,14 @@ def main():
                         for b_item in brands_details:
                             b_name_curr = b_item.get("brand_name", "")
                             matched_metrics = match_brand_listing_metrics(b_name_curr, brand_listing_metrics_map)
+                            b_item["listing_count"] = matched_metrics.get("listing_count") or matched_metrics.get("active_listings", "")
+                            b_item["status"] = matched_metrics.get("status", "")
                             b_item["active_listings"] = matched_metrics.get("active_listings", "")
                             b_item["suppressed_listings"] = matched_metrics.get("suppressed_listings", "")
                             b_item["variants_available"] = matched_metrics.get("variants_available", "")
 
-                    primary_active = brands_details[0].get("active_listings", "") if brands_details else ""
-                    primary_suppressed = brands_details[0].get("suppressed_listings", "") if brands_details else ""
-                    primary_variants = brands_details[0].get("variants_available", "") if brands_details else ""
+                    primary_listing_count = brands_details[0].get("listing_count", "") if brands_details else ""
+                    primary_status = brands_details[0].get("status", "") if brands_details else ""
 
                     # Step 5: Search Instagram for Brand Name & Followers (with strict brand-in-URL validation)
                     instagram_url = ""
@@ -629,9 +630,10 @@ def main():
                         **api3_data,
                         **api4_data,
                         "brands_details": brands_details,
-                        "active_listings": primary_active,
-                        "suppressed_listings": primary_suppressed,
-                        "variants_available": primary_variants,
+                        "listing_count": primary_listing_count,
+                        "status": primary_status,
+                        "active_listings": primary_listing_count,
+                        "suppressed_listings": primary_status,
                         "instagram_url": instagram_url,
                         "instagram_followers": instagram_followers,
                         "unique_email": unique_email,
@@ -651,8 +653,8 @@ def main():
                             d2c_no_count += 1
 
                         logger.info(
-                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Tier: %s | Addr: %s | Appr: %s | Act: %s | ReqID: %s | Brand: %s | Vertical: %s | BrOwner: %s | Doc: %s | ActList: %s | SuppList: %s | Variants: %s | Web: %s | Insta: %s | Followers: %s | UniqEmail: %s | isD2C: %s | Month: %s | GMV: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
-                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, tier, address or "-", approved_brand, actual_brand_count, request_id or "-", brand_name or "-", vertical_name or "-", brand_owner or "-", document_type or "-", primary_active or "-", primary_suppressed or "-", primary_variants or "-", brand_website_link or "-", instagram_url or "-", instagram_followers or "-", unique_email, is_d2c_str, month or "-", gross_amount or "-", total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
+                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Tier: %s | Addr: %s | Appr: %s | Act: %s | ReqID: %s | Brand: %s | Vertical: %s | BrOwner: %s | Doc: %s | ListCount: %s | Status: %s | Web: %s | Insta: %s | Followers: %s | UniqEmail: %s | isD2C: %s | Month: %s | GMV: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
+                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, tier, address or "-", approved_brand, actual_brand_count, request_id or "-", brand_name or "-", vertical_name or "-", brand_owner or "-", document_type or "-", primary_listing_count or "-", primary_status or "-", brand_website_link or "-", instagram_url or "-", instagram_followers or "-", unique_email, is_d2c_str, month or "-", gross_amount or "-", total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
                         )
                         if total_saved_in_session % 100 == 0:
                             logger.info(

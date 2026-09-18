@@ -140,20 +140,22 @@ class TestAPI4Scraper(unittest.TestCase):
             "GMV for June July and August month"
         )
 
-    def test_parse_brand_listing_response_screenshot_format(self):
+    def test_parse_brand_listing_response_response_txt_format(self):
         """
-        Tests parsing exact screenshot response containing:
-        - iBELL: Active Listings = 70+, Suppressed = 30, Variants = WeldingMachine, PowerDrill, HandToolKit, Paint Sprayer, Heat Gun
-        - Vormir (Vormar): Active Listings = Active, Suppressed = 0, Variants = Heat Gun (e.g. VR HG20-50 2000W)
-        - Wintech Pro: Active Listings = 0, Suppressed = 0, Variants = No active listings found in catalog
+        Tests parsing the exact real response from Response.txt containing:
+        - Table component: ["Brand", "Listing Count", "Status"]
+        - iBELL -> Listing Count: "50+", Status: "Active"
+        - VORMIR -> Listing Count: "4", Status: "Active"
+        - WINTECH PRO -> Listing Count: "0", Status: "No Active Listings"
         """
         table_component = {
             "component": "Table",
-            "columns": ["Brand", "Active Listings", "Suppressed Listings", "Key Verticals/Variants Available"],
+            "columns": ["Brand", "Listing Count", "Status"],
+            "columnTypes": ["text", "text", "text"],
             "cells": [
-                "iBELL", "70+", "30", "WeldingMachine, PowerDrill, HandToolKit, Paint Sprayer, Heat Gun",
-                "Vormir (Vormar)", "Active", "0", "Heat Gun (e.g. VR HG20-50 2000W)",
-                "Wintech Pro", "0", "0", "No active listings found in catalog"
+                "iBELL", "50+", "Active",
+                "VORMIR", "4", "Active",
+                "WINTECH PRO", "0", "No Active Listings"
             ]
         }
         ui_json_text = f"```ui-json\n{json.dumps(table_component)}\n```"
@@ -170,29 +172,30 @@ class TestAPI4Scraper(unittest.TestCase):
         }
         raw_sse = f"data: {json.dumps(sse_data)}\n"
 
-        brand_names = ["iBELL", "Vormar", "Wintech Pro"]
+        brand_names = ["iBELL", "VORMIR", "WINTECH PRO"]
         res = self.scraper.parse_brand_listing_response(raw_sse, brand_names)
 
         self.assertIn("iBELL", res)
-        self.assertEqual(res["iBELL"]["active_listings"], "70+")
-        self.assertEqual(res["iBELL"]["suppressed_listings"], "30")
-        self.assertEqual(res["iBELL"]["variants_available"], "WeldingMachine, PowerDrill, HandToolKit, Paint Sprayer, Heat Gun")
+        self.assertEqual(res["iBELL"]["listing_count"], "50+")
+        self.assertEqual(res["iBELL"]["status"], "Active")
 
-        self.assertIn("Vormir (Vormar)", res)
-        self.assertEqual(res["Vormir (Vormar)"]["active_listings"], "Active")
-        self.assertEqual(res["Vormir (Vormar)"]["suppressed_listings"], "0")
-        self.assertEqual(res["Vormir (Vormar)"]["variants_available"], "Heat Gun (e.g. VR HG20-50 2000W)")
+        self.assertIn("VORMIR", res)
+        self.assertEqual(res["VORMIR"]["listing_count"], "4")
+        self.assertEqual(res["VORMIR"]["status"], "Active")
 
-        self.assertIn("Wintech Pro", res)
-        self.assertEqual(res["Wintech Pro"]["active_listings"], "0")
-        self.assertEqual(res["Wintech Pro"]["suppressed_listings"], "0")
-        self.assertEqual(res["Wintech Pro"]["variants_available"], "No active listings found in catalog")
+        self.assertIn("WINTECH PRO", res)
+        self.assertEqual(res["WINTECH PRO"]["listing_count"], "0")
+        self.assertEqual(res["WINTECH PRO"]["status"], "No Active Listings")
 
-        # Test match_brand_listing_metrics helper
+        # Test match_brand_listing_metrics helper with brand name variants
         from scrapers.api4_scraper import match_brand_listing_metrics
-        matched_vormar = match_brand_listing_metrics("Vormar", res)
-        self.assertEqual(matched_vormar["active_listings"], "Active")
-        self.assertEqual(matched_vormar["variants_available"], "Heat Gun (e.g. VR HG20-50 2000W)")
+        matched_vormir = match_brand_listing_metrics("VORMIR", res)
+        self.assertEqual(matched_vormir["listing_count"], "4")
+        self.assertEqual(matched_vormir["status"], "Active")
+
+        matched_wintech = match_brand_listing_metrics("Wintech Pro", res)
+        self.assertEqual(matched_wintech["listing_count"], "0")
+        self.assertEqual(matched_wintech["status"], "No Active Listings")
 
 
 if __name__ == "__main__":

@@ -221,13 +221,13 @@ class CSVWriter:
                     cell.alignment = header_align
                     cell.border = thin_border
 
-                # Set column widths (33 columns)
+                # Set column widths (32 columns)
                 col_widths = {
                     1: 8, 2: 20, 3: 25, 4: 18, 5: 16, 6: 14, 7: 35, 8: 15, 9: 15,
                     10: 16, 11: 18, 12: 18, 13: 22, 14: 25, 15: 16, 16: 16,
-                    17: 18, 18: 20, 19: 35, 20: 32, 21: 35, 22: 20, 23: 18,
-                    24: 24, 25: 25, 26: 28, 27: 14, 28: 12, 29: 30, 30: 25,
-                    31: 15, 32: 25, 33: 25,
+                    17: 18, 18: 20, 19: 32, 20: 35, 21: 20, 22: 18,
+                    23: 24, 24: 25, 25: 28, 26: 14, 27: 12, 28: 30, 29: 25,
+                    30: 15, 31: 25, 32: 25,
                 }
                 for c_idx, width in col_widths.items():
                     col_letter = openpyxl.utils.get_column_letter(c_idx)
@@ -304,7 +304,7 @@ class CSVWriter:
                 cell.alignment = header_align
                 cell.border = thin_border
 
-            # Column widths (33 columns)
+            # Set column widths (32 columns)
             col_widths = {
                 1: 8,   # Sr No
                 2: 20,  # Customer ID
@@ -322,23 +322,22 @@ class CSVWriter:
                 14: 25, # Vertical Name
                 15: 16, # Brand Owner
                 16: 16, # Document Type
-                17: 18, # Active Listings
-                18: 20, # Suppressed Listings
-                19: 35, # Key Verticals/Variants Available
-                20: 32, # Brand Website Link
-                21: 35, # Instagram URL
-                22: 20, # Instagram Followers
-                23: 18, # Mobile Number
-                24: 24, # Registered Mobile Number
-                25: 25, # Email ID
-                26: 28, # Registered Email ID
-                27: 14, # Unique Email
-                28: 12, # isD2C
-                29: 30, # Month
-                30: 25, # Gross Amount (GMV)
-                31: 15, # Gross Units
-                32: 25, # Net Amount
-                33: 25, # Cancelled Amount
+                17: 18, # Listing Count
+                18: 20, # Status
+                19: 32, # Brand Website Link
+                20: 35, # Instagram URL
+                21: 20, # Instagram Followers
+                22: 18, # Mobile Number
+                23: 24, # Registered Mobile Number
+                24: 25, # Email ID
+                25: 28, # Registered Email ID
+                26: 14, # Unique Email
+                27: 12, # isD2C
+                28: 30, # Month
+                29: 25, # Gross Amount (GMV)
+                30: 15, # Gross Units
+                31: 25, # Net Amount
+                32: 25, # Cancelled Amount
             }
             for col_idx, width in col_widths.items():
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
@@ -610,9 +609,8 @@ class CSVWriter:
         net_amount = data.get("net_amount", "")
         cancelled_amount = data.get("cancelled_amount", "")
 
-        active_listings = data.get("active_listings", "")
-        suppressed_listings = data.get("suppressed_listings", "")
-        variants_available = data.get("variants_available", "") or data.get("key_verticals_variants_available", "")
+        listing_count = data.get("listing_count", "") or data.get("active_listings", "")
+        status = data.get("status", "")
 
         brands_details = data.get("brands_details") or []
         if brands_details and isinstance(brands_details, list) and len(brands_details) > 0:
@@ -623,9 +621,8 @@ class CSVWriter:
                 vertical_name = first_brand.get("vertical_name") or vertical_name
                 brand_owner = first_brand.get("brand_owner") or brand_owner
                 document_type = first_brand.get("document_type") or document_type
-                active_listings = first_brand.get("active_listings") or active_listings
-                suppressed_listings = first_brand.get("suppressed_listings") or suppressed_listings
-                variants_available = first_brand.get("variants_available") or variants_available
+                listing_count = first_brand.get("listing_count") or first_brand.get("active_listings") or listing_count
+                status = first_brand.get("status") or status
                 brand_website_link = first_brand.get("brand_website_link") or brand_website_link
 
         main_row = [
@@ -645,9 +642,8 @@ class CSVWriter:
             vertical_name,
             brand_owner,
             document_type,
-            active_listings,
-            suppressed_listings,
-            variants_available,
+            listing_count,
+            status,
             brand_website_link,
             instagram_url,
             instagram_followers,
@@ -688,23 +684,22 @@ class CSVWriter:
                     b_item.get("vertical_name", ""),            # 13: Vertical Name
                     b_item.get("brand_owner", ""),              # 14: Brand Owner
                     b_item.get("document_type", ""),            # 15: Document Type
-                    b_item.get("active_listings", ""),          # 16: Active Listings
-                    b_item.get("suppressed_listings", ""),      # 17: Suppressed Listings
-                    b_item.get("variants_available", ""),       # 18: Key Verticals/Variants Available
-                    "",  # 19: Brand Website Link
-                    "",  # 20: Instagram URL
-                    "",  # 21: Instagram Followers
-                    "",  # 22: Mobile Number
-                    "",  # 23: Registered Mobile Number
-                    "",  # 24: Email ID
-                    "",  # 25: Registered Email ID
-                    "",  # 26: Unique Email
-                    "",  # 27: isD2C
-                    "",  # 28: Month
-                    "",  # 29: Gross Amount (GMV)
-                    "",  # 30: Gross Units
-                    "",  # 31: Net Amount
-                    "",  # 32: Cancelled Amount
+                    b_item.get("listing_count", "") or b_item.get("active_listings", ""), # 16: Listing Count
+                    b_item.get("status", ""),                   # 17: Status
+                    "",  # 18: Brand Website Link
+                    "",  # 19: Instagram URL
+                    "",  # 20: Instagram Followers
+                    "",  # 21: Mobile Number
+                    "",  # 22: Registered Mobile Number
+                    "",  # 23: Email ID
+                    "",  # 24: Registered Email ID
+                    "",  # 25: Unique Email
+                    "",  # 26: isD2C
+                    "",  # 27: Month
+                    "",  # 28: Gross Amount (GMV)
+                    "",  # 29: Gross Units
+                    "",  # 30: Net Amount
+                    "",  # 31: Cancelled Amount
                 ]
                 rows.append(sub_row)
 

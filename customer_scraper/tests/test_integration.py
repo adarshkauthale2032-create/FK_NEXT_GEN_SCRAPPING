@@ -189,7 +189,7 @@ class TestIntegrationScraperFlow(unittest.TestCase):
             rows = list(csv.reader(f))
 
         self.assertEqual(len(rows), 3)  # Header + 2 brand rows for the 2 unique brands
-        self.assertEqual(len(rows[1]), 33)
+        self.assertEqual(len(rows[1]), 32)
         self.assertEqual(rows[1][0], "1")  # Sr No
         self.assertEqual(rows[1][1], cust_id)
         self.assertEqual(rows[1][2], "Unmanaged Seller")
@@ -206,23 +206,22 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.assertEqual(rows[1][13], "")   # Vertical Name
         self.assertEqual(rows[1][14], "")   # Brand Owner
         self.assertEqual(rows[1][15], "")   # Document Type
-        self.assertEqual(rows[1][16], "")   # Active Listings
-        self.assertEqual(rows[1][17], "")   # Suppressed Listings
-        self.assertEqual(rows[1][18], "")   # Variants Available
-        self.assertEqual(rows[1][19], "")   # Brand Website Link
-        self.assertEqual(rows[1][20], "")   # Instagram URL
-        self.assertEqual(rows[1][21], "")   # Instagram Followers
-        self.assertEqual(rows[1][22], "9123456780")  # Mobile Number
-        self.assertEqual(rows[1][23], "9123456781")  # Registered Mobile Number
-        self.assertEqual(rows[1][24], "unman@mail.com")  # Email ID
-        self.assertEqual(rows[1][25], "unman_prim@mail.com")  # Registered Email ID
-        self.assertEqual(rows[1][26], "No")  # Unique Email
-        self.assertEqual(rows[1][27], "No")  # isD2C (mail.com is generic)
-        self.assertEqual(rows[1][28], "")   # Month
-        self.assertEqual(rows[1][29], "")   # Gross Amount (GMV)
+        self.assertEqual(rows[1][16], "")   # Listing Count
+        self.assertEqual(rows[1][17], "")   # Status
+        self.assertEqual(rows[1][18], "")   # Brand Website Link
+        self.assertEqual(rows[1][19], "")   # Instagram URL
+        self.assertEqual(rows[1][20], "")   # Instagram Followers
+        self.assertEqual(rows[1][21], "9123456780")  # Mobile Number
+        self.assertEqual(rows[1][22], "9123456781")  # Registered Mobile Number
+        self.assertEqual(rows[1][23], "unman@mail.com")  # Email ID
+        self.assertEqual(rows[1][24], "unman_prim@mail.com")  # Registered Email ID
+        self.assertEqual(rows[1][25], "No")  # Unique Email
+        self.assertEqual(rows[1][26], "No")  # isD2C (mail.com is generic)
+        self.assertEqual(rows[1][27], "")   # Month
+        self.assertEqual(rows[1][28], "")   # Gross Amount (GMV)
 
         # Row 2 (Brand 2: TOY_BRAND, empty supplemental row)
-        self.assertEqual(len(rows[2]), 33)
+        self.assertEqual(len(rows[2]), 32)
         self.assertEqual(rows[2][0], "")
         self.assertEqual(rows[2][1], "")
         self.assertEqual(rows[2][12], "TOY_BRAND")

@@ -515,15 +515,16 @@ class API4Scraper:
     def parse_brand_listing_response(self, sse_text: str, brand_names: Optional[List[str]] = None) -> Dict[str, Dict[str, str]]:
         """
         Parses the SSE stream response from sellerCopilot_runSseStream for the prompt:
-        "What is the active listing count for the <brands> along with variation"
+        "What is the listing count for the <brands> along with variation"
 
-        Extracts per-brand metrics:
-        - active_listings (e.g. "70+", "Active", "0")
-        - suppressed_listings (e.g. "30", "0")
-        - variants_available (e.g. "WeldingMachine, PowerDrill, HandToolKit, Paint Sprayer, Heat Gun")
+        Extracts per-brand metrics matching the Table/InsightCard:
+        - listing_count (e.g. "50+", "4", "0")
+        - status (e.g. "Active", "No Active Listings")
 
         Returns:
             Dict mapping brand_key (or brand_name) -> {
+                "listing_count": str,
+                "status": str,
                 "active_listings": str,
                 "suppressed_listings": str,
                 "variants_available": str,
@@ -595,11 +596,13 @@ class API4Scraper:
 
                     col_indices: Dict[str, int] = {}
                     for idx, col in enumerate(columns):
-                        c_low = col.lower()
+                        c_low = col.lower().strip()
                         if "brand" in c_low:
                             col_indices["brand"] = idx
-                        elif "active" in c_low:
-                            col_indices["active_listings"] = idx
+                        elif "listing" in c_low or "count" in c_low or "active" in c_low:
+                            col_indices["listing_count"] = idx
+                        elif "status" in c_low:
+                            col_indices["status"] = idx
                         elif "suppress" in c_low:
                             col_indices["suppressed_listings"] = idx
                         elif any(k in c_low for k in ("variant", "vertical", "key", "available")):
@@ -612,20 +615,23 @@ class API4Scraper:
                                 break
 
                             b_val = row_cells[col_indices["brand"]] if col_indices["brand"] < len(row_cells) else ""
-                            act_val = row_cells[col_indices["active_listings"]] if "active_listings" in col_indices and col_indices["active_listings"] < len(row_cells) else ""
+                            lc_val = row_cells[col_indices["listing_count"]] if "listing_count" in col_indices and col_indices["listing_count"] < len(row_cells) else ""
+                            st_val = row_cells[col_indices["status"]] if "status" in col_indices and col_indices["status"] < len(row_cells) else ""
                             sup_val = row_cells[col_indices["suppressed_listings"]] if "suppressed_listings" in col_indices and col_indices["suppressed_listings"] < len(row_cells) else ""
                             var_val = row_cells[col_indices["variants_available"]] if "variants_available" in col_indices and col_indices["variants_available"] < len(row_cells) else ""
 
                             if b_val:
                                 results[b_val.strip()] = {
-                                    "active_listings": act_val.strip(),
+                                    "listing_count": lc_val.strip(),
+                                    "status": st_val.strip(),
+                                    "active_listings": lc_val.strip(),
                                     "suppressed_listings": sup_val.strip(),
                                     "variants_available": var_val.strip(),
                                 }
             except Exception as e:
                 logger.debug("Failed parsing ui-json Table in brand listing response: %s", str(e))
 
-        # 2. Parse Markdown Table block (| Brand | Active Listings | Suppressed Listings | Key Verticals/Variants Available |)
+        # 2. Parse Markdown Table block (| Brand | Listing Count | Status |)
         if not results:
             md_table_lines = [l.strip() for l in accumulated_text.splitlines() if l.strip().startswith("|") and l.strip().endswith("|")]
             if len(md_table_lines) >= 2:
@@ -633,11 +639,13 @@ class API4Scraper:
                     header_parts = [p.strip() for p in md_table_lines[0].split("|")[1:-1]]
                     col_indices = {}
                     for idx, h in enumerate(header_parts):
-                        h_low = h.lower()
+                        h_low = h.lower().strip()
                         if "brand" in h_low:
                             col_indices["brand"] = idx
-                        elif "active" in h_low:
-                            col_indices["active_listings"] = idx
+                        elif "listing" in h_low or "count" in h_low or "active" in h_low:
+                            col_indices["listing_count"] = idx
+                        elif "status" in h_low:
+                            col_indices["status"] = idx
                         elif "suppress" in h_low:
                             col_indices["suppressed_listings"] = idx
                         elif any(k in h_low for k in ("variant", "vertical", "key", "available")):
@@ -650,20 +658,23 @@ class API4Scraper:
                             row_parts = [p.strip() for p in row_line.split("|")[1:-1]]
                             if len(row_parts) >= len(header_parts):
                                 b_val = row_parts[col_indices["brand"]] if col_indices["brand"] < len(row_parts) else ""
-                                act_val = row_parts[col_indices["active_listings"]] if "active_listings" in col_indices and col_indices["active_listings"] < len(row_parts) else ""
+                                lc_val = row_parts[col_indices["listing_count"]] if "listing_count" in col_indices and col_indices["listing_count"] < len(row_parts) else ""
+                                st_val = row_parts[col_indices["status"]] if "status" in col_indices and col_indices["status"] < len(row_parts) else ""
                                 sup_val = row_parts[col_indices["suppressed_listings"]] if "suppressed_listings" in col_indices and col_indices["suppressed_listings"] < len(row_parts) else ""
                                 var_val = row_parts[col_indices["variants_available"]] if "variants_available" in col_indices and col_indices["variants_available"] < len(row_parts) else ""
 
                                 if b_val:
                                     results[b_val.strip()] = {
-                                        "active_listings": act_val.strip(),
+                                        "listing_count": lc_val.strip(),
+                                        "status": st_val.strip(),
+                                        "active_listings": lc_val.strip(),
                                         "suppressed_listings": sup_val.strip(),
                                         "variants_available": var_val.strip(),
                                     }
                 except Exception as md_err:
                     logger.debug("Failed parsing markdown table in brand listing response: %s", str(md_err))
 
-        # 3. Fallback: Parse bullet/paragraph text summaries if table was not found
+        # 3. Fallback: Parse InsightCard or bullet/paragraph text summaries if table was not found
         if not results and brand_names:
             for b_name in brand_names:
                 b_clean = b_name.strip()
@@ -673,13 +684,16 @@ class API4Scraper:
                 match = re.search(pattern, accumulated_text, re.IGNORECASE)
                 if match:
                     snippet = match.group(0)
-                    act_m = re.search(r"(\d+\+?|\bactive\b)\s+active listings?", snippet, re.IGNORECASE)
+                    act_m = re.search(r"(\d+\+?|\bactive\b)\s+(?:variations?\/)?listings?\s+(?:active)?", snippet, re.IGNORECASE)
                     sup_m = re.search(r"(\d+)\s+listings?[\s\w]*?suppressed", snippet, re.IGNORECASE)
 
-                    act_val = act_m.group(1) if act_m else ("0" if "zero active" in snippet.lower() or "no active" in snippet.lower() else "")
+                    act_val = act_m.group(1) if act_m else ("0" if "zero" in snippet.lower() or "no active" in snippet.lower() else "")
                     sup_val = sup_m.group(1) if sup_m else ("0" if "0" in snippet or "zero" in snippet.lower() else "")
+                    st_val = "Active" if act_val and act_val != "0" else "No Active Listings"
 
                     results[b_clean] = {
+                        "listing_count": act_val,
+                        "status": st_val,
                         "active_listings": act_val,
                         "suppressed_listings": sup_val,
                         "variants_available": snippet.strip()[:200],
@@ -690,17 +704,17 @@ class API4Scraper:
     def get_brand_listing_metrics(self, customer_id: str, brand_names: List[str]) -> Dict[str, Dict[str, str]]:
         """
         Calls Setu Copilot AI chatbot for the prompt:
-        "What is the active listing count for the <brand names> along with variation"
+        "what is the listing count for <brand names> brand with their variation"
 
         Returns:
-            Dict mapping brand name -> {"active_listings": str, "suppressed_listings": str, "variants_available": str}
+            Dict mapping brand name -> {"listing_count": str, "status": str, "active_listings": str, ...}
         """
         valid_brands = [b.strip() for b in brand_names if b and str(b).strip() and str(b).strip().lower() not in ("null", "none")]
         if not valid_brands:
             return {}
 
         brand_query_str = ", ".join(valid_brands)
-        prompt_text = f"What is the active listing count for the {brand_query_str} along with variation"
+        prompt_text = f"what is the listing count for {brand_query_str} brand with their variation"
         display_name = f"Brand Listing Count for {brand_query_str}"
 
         endpoint = API4_ENDPOINT.format(customer_id=customer_id)
@@ -802,7 +816,7 @@ class API4Scraper:
         parsed_brand_metrics = self.parse_brand_listing_response(sse_response_text, valid_brands)
         print(f"📊 [AI Brand Metrics Parsed]:")
         for b, m in parsed_brand_metrics.items():
-            print(f"   • {b}: Active={m.get('active_listings')}, Suppressed={m.get('suppressed_listings')}, Variants={m.get('variants_available')}")
+            print(f"   • {b}: Listing Count={m.get('listing_count')}, Status={m.get('status')}")
         print("=" * 30 + f" [DEBUGGING BRAND LISTING AI END: {customer_id}] " + "=" * 30 + "\n")
 
         return parsed_brand_metrics
@@ -814,7 +828,7 @@ def match_brand_listing_metrics(brand_name: str, brand_metrics_map: Dict[str, Di
     using exact, case-insensitive, or substring matching.
     """
     if not brand_name or not brand_metrics_map:
-        return {"active_listings": "", "suppressed_listings": "", "variants_available": ""}
+        return {"listing_count": "", "status": "", "active_listings": "", "suppressed_listings": "", "variants_available": ""}
 
     b_clean = brand_name.strip().lower()
 
@@ -823,7 +837,7 @@ def match_brand_listing_metrics(brand_name: str, brand_metrics_map: Dict[str, Di
         if k.strip().lower() == b_clean:
             return v
 
-    # Substring / containment match (e.g. 'Vormir (Vormar)' matches 'Vormar' or 'Vormir')
+    # Substring / containment match (e.g. 'VORMIR (Vormar)' matches 'Vormar' or 'Vormir')
     for k, v in brand_metrics_map.items():
         k_clean = k.strip().lower()
         if b_clean in k_clean or k_clean in b_clean:
@@ -836,5 +850,5 @@ def match_brand_listing_metrics(brand_name: str, brand_metrics_map: Dict[str, Di
         if b_tokens and k_tokens and (b_tokens.intersection(k_tokens)):
             return v
 
-    return {"active_listings": "", "suppressed_listings": "", "variants_available": ""}
+    return {"listing_count": "", "status": "", "active_listings": "", "suppressed_listings": "", "variants_available": ""}
 
