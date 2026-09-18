@@ -98,7 +98,7 @@ class TestCSVWriter(unittest.TestCase):
 
         self.assertEqual(len(rows), 2)  # Header + 1 data row
         row_vals = rows[1]
-        self.assertEqual(len(row_vals), 30)
+        self.assertEqual(len(row_vals), 33)
         self.assertEqual(row_vals[0], "2")  # Sr No
         self.assertEqual(row_vals[1], "CUST_002")
         self.assertEqual(row_vals[2], "Retailer Plus")
@@ -113,19 +113,25 @@ class TestCSVWriter(unittest.TestCase):
         self.assertEqual(row_vals[11], "")            # Request ID
         self.assertEqual(row_vals[12], "")            # Brand Name
         self.assertEqual(row_vals[13], "Footwear")    # Vertical Name
-        self.assertEqual(row_vals[17], "")            # Instagram URL
-        self.assertEqual(row_vals[18], "")            # Instagram Followers
-        self.assertEqual(row_vals[19], "9876543210")  # Mobile Number
-        self.assertEqual(row_vals[20], "9876543211")  # Registered Mobile Number
-        self.assertEqual(row_vals[21], "contact@retail.com")
-        self.assertEqual(row_vals[22], "reg@retail.com")
-        self.assertEqual(row_vals[23], "Yes")         # Unique Email
-        self.assertEqual(row_vals[24], "Yes")         # retail.com is custom domain -> isD2C = Yes
-        self.assertEqual(row_vals[25], "June 2026 | July 2026 | August 2026")  # Month
-        self.assertEqual(row_vals[26], "₹915 | ₹1,603 | ₹6,313")               # Gross Amount (GMV)
-        self.assertEqual(row_vals[27], "1 | 1 | 4")                            # Gross Units
-        self.assertEqual(row_vals[28], "₹0 | ₹1,603 | ₹3,082")                 # Net Amount
-        self.assertEqual(row_vals[29], "₹915 | ₹0 | ₹4,692")                   # Cancelled Amount
+        self.assertEqual(row_vals[14], "")            # Brand Owner
+        self.assertEqual(row_vals[15], "")            # Document Type
+        self.assertEqual(row_vals[16], "")            # Active Listings
+        self.assertEqual(row_vals[17], "")            # Suppressed Listings
+        self.assertEqual(row_vals[18], "")            # Variants Available
+        self.assertEqual(row_vals[19], "")            # Brand Website Link
+        self.assertEqual(row_vals[20], "")            # Instagram URL
+        self.assertEqual(row_vals[21], "")            # Instagram Followers
+        self.assertEqual(row_vals[22], "9876543210")  # Mobile Number
+        self.assertEqual(row_vals[23], "9876543211")  # Registered Mobile Number
+        self.assertEqual(row_vals[24], "contact@retail.com")
+        self.assertEqual(row_vals[25], "reg@retail.com")
+        self.assertEqual(row_vals[26], "Yes")         # Unique Email
+        self.assertEqual(row_vals[27], "Yes")         # retail.com is custom domain -> isD2C = Yes
+        self.assertEqual(row_vals[28], "June 2026 | July 2026 | August 2026")  # Month
+        self.assertEqual(row_vals[29], "₹915 | ₹1,603 | ₹6,313")               # Gross Amount (GMV)
+        self.assertEqual(row_vals[30], "1 | 1 | 4")                            # Gross Units
+        self.assertEqual(row_vals[31], "₹0 | ₹1,603 | ₹3,082")                 # Net Amount
+        self.assertEqual(row_vals[32], "₹915 | ₹0 | ₹4,692")                   # Cancelled Amount
 
     def test_get_completed_customer_ids(self):
         cust1 = {"customer_id": "ID_AAA", "support_manager": "Yes"}

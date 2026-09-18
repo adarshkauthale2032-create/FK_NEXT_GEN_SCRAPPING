@@ -511,3 +511,330 @@ class API4Scraper:
             metrics.get("net_amount") or "-",
         )
         return metrics
+
+    def parse_brand_listing_response(self, sse_text: str, brand_names: Optional[List[str]] = None) -> Dict[str, Dict[str, str]]:
+        """
+        Parses the SSE stream response from sellerCopilot_runSseStream for the prompt:
+        "What is the active listing count for the <brands> along with variation"
+
+        Extracts per-brand metrics:
+        - active_listings (e.g. "70+", "Active", "0")
+        - suppressed_listings (e.g. "30", "0")
+        - variants_available (e.g. "WeldingMachine, PowerDrill, HandToolKit, Paint Sprayer, Heat Gun")
+
+        Returns:
+            Dict mapping brand_key (or brand_name) -> {
+                "active_listings": str,
+                "suppressed_listings": str,
+                "variants_available": str,
+            }
+        """
+        if not sse_text or not sse_text.strip():
+            return {}
+
+        accumulated_text = ""
+        raw_function_results: List[str] = []
+
+        # Check if entire sse_text is a raw JSON response
+        clean_text = sse_text.strip()
+        if clean_text.startswith("{") and clean_text.endswith("}"):
+            try:
+                raw_json = json.loads(clean_text)
+                events = raw_json.get("data", {}).get("sellerCopilot_getSessionById", {}).get("events", [])
+                for ev in events:
+                    parts = ev.get("content", {}).get("parts", []) if isinstance(ev.get("content"), dict) else []
+                    for part in parts:
+                        if isinstance(part, dict):
+                            t = part.get("text", "")
+                            if t:
+                                accumulated_text += t + "\n"
+                            fn_resp = part.get("functionResponse", {}).get("response", {}).get("result", "")
+                            if fn_resp:
+                                raw_function_results.append(str(fn_resp))
+            except Exception:
+                accumulated_text += clean_text + "\n"
+
+        # Collect text from SSE data stream lines
+        for line in sse_text.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+
+            data_str = line[5:].strip()
+            if not data_str or data_str == "[DONE]":
+                continue
+
+            try:
+                data_obj = json.loads(data_str)
+            except Exception:
+                continue
+
+            stream_data = data_obj.get("data", {}).get("sellerCopilot_runSseStream", {}).get("data", {})
+            content = stream_data.get("content", {})
+            parts = content.get("parts", [])
+            for part in parts:
+                if isinstance(part, dict):
+                    txt = part.get("text", "")
+                    if txt:
+                        accumulated_text += txt
+                    fn_resp = part.get("functionResponse", {}).get("response", {}).get("result", "")
+                    if fn_resp:
+                        raw_function_results.append(str(fn_resp))
+
+        results: Dict[str, Dict[str, str]] = {}
+
+        # 1. Parse ```ui-json Table block
+        table_matches = re.findall(r"```ui-json\s*(\{[\s\S]*?\})\s*```", accumulated_text)
+        for table_json_str in table_matches:
+            try:
+                table_obj = json.loads(table_json_str)
+                if table_obj.get("component") == "Table":
+                    columns = [str(c).strip() for c in table_obj.get("columns", [])]
+                    cells = [str(c).strip() for c in table_obj.get("cells", [])]
+                    num_cols = len(columns)
+
+                    col_indices: Dict[str, int] = {}
+                    for idx, col in enumerate(columns):
+                        c_low = col.lower()
+                        if "brand" in c_low:
+                            col_indices["brand"] = idx
+                        elif "active" in c_low:
+                            col_indices["active_listings"] = idx
+                        elif "suppress" in c_low:
+                            col_indices["suppressed_listings"] = idx
+                        elif any(k in c_low for k in ("variant", "vertical", "key", "available")):
+                            col_indices["variants_available"] = idx
+
+                    if "brand" in col_indices and num_cols > 0:
+                        for row_start in range(0, len(cells), num_cols):
+                            row_cells = cells[row_start : row_start + num_cols]
+                            if len(row_cells) < num_cols:
+                                break
+
+                            b_val = row_cells[col_indices["brand"]] if col_indices["brand"] < len(row_cells) else ""
+                            act_val = row_cells[col_indices["active_listings"]] if "active_listings" in col_indices and col_indices["active_listings"] < len(row_cells) else ""
+                            sup_val = row_cells[col_indices["suppressed_listings"]] if "suppressed_listings" in col_indices and col_indices["suppressed_listings"] < len(row_cells) else ""
+                            var_val = row_cells[col_indices["variants_available"]] if "variants_available" in col_indices and col_indices["variants_available"] < len(row_cells) else ""
+
+                            if b_val:
+                                results[b_val.strip()] = {
+                                    "active_listings": act_val.strip(),
+                                    "suppressed_listings": sup_val.strip(),
+                                    "variants_available": var_val.strip(),
+                                }
+            except Exception as e:
+                logger.debug("Failed parsing ui-json Table in brand listing response: %s", str(e))
+
+        # 2. Parse Markdown Table block (| Brand | Active Listings | Suppressed Listings | Key Verticals/Variants Available |)
+        if not results:
+            md_table_lines = [l.strip() for l in accumulated_text.splitlines() if l.strip().startswith("|") and l.strip().endswith("|")]
+            if len(md_table_lines) >= 2:
+                try:
+                    header_parts = [p.strip() for p in md_table_lines[0].split("|")[1:-1]]
+                    col_indices = {}
+                    for idx, h in enumerate(header_parts):
+                        h_low = h.lower()
+                        if "brand" in h_low:
+                            col_indices["brand"] = idx
+                        elif "active" in h_low:
+                            col_indices["active_listings"] = idx
+                        elif "suppress" in h_low:
+                            col_indices["suppressed_listings"] = idx
+                        elif any(k in h_low for k in ("variant", "vertical", "key", "available")):
+                            col_indices["variants_available"] = idx
+
+                    if "brand" in col_indices:
+                        for row_line in md_table_lines[1:]:
+                            if "---" in row_line:
+                                continue
+                            row_parts = [p.strip() for p in row_line.split("|")[1:-1]]
+                            if len(row_parts) >= len(header_parts):
+                                b_val = row_parts[col_indices["brand"]] if col_indices["brand"] < len(row_parts) else ""
+                                act_val = row_parts[col_indices["active_listings"]] if "active_listings" in col_indices and col_indices["active_listings"] < len(row_parts) else ""
+                                sup_val = row_parts[col_indices["suppressed_listings"]] if "suppressed_listings" in col_indices and col_indices["suppressed_listings"] < len(row_parts) else ""
+                                var_val = row_parts[col_indices["variants_available"]] if "variants_available" in col_indices and col_indices["variants_available"] < len(row_parts) else ""
+
+                                if b_val:
+                                    results[b_val.strip()] = {
+                                        "active_listings": act_val.strip(),
+                                        "suppressed_listings": sup_val.strip(),
+                                        "variants_available": var_val.strip(),
+                                    }
+                except Exception as md_err:
+                    logger.debug("Failed parsing markdown table in brand listing response: %s", str(md_err))
+
+        # 3. Fallback: Parse bullet/paragraph text summaries if table was not found
+        if not results and brand_names:
+            for b_name in brand_names:
+                b_clean = b_name.strip()
+                if not b_clean:
+                    continue
+                pattern = rf"{re.escape(b_clean)}[\s\S]*?(?=(?:[A-Z][a-zA-Z0-9_\s]+ Brand|\Z))"
+                match = re.search(pattern, accumulated_text, re.IGNORECASE)
+                if match:
+                    snippet = match.group(0)
+                    act_m = re.search(r"(\d+\+?|\bactive\b)\s+active listings?", snippet, re.IGNORECASE)
+                    sup_m = re.search(r"(\d+)\s+listings?[\s\w]*?suppressed", snippet, re.IGNORECASE)
+
+                    act_val = act_m.group(1) if act_m else ("0" if "zero active" in snippet.lower() or "no active" in snippet.lower() else "")
+                    sup_val = sup_m.group(1) if sup_m else ("0" if "0" in snippet or "zero" in snippet.lower() else "")
+
+                    results[b_clean] = {
+                        "active_listings": act_val,
+                        "suppressed_listings": sup_val,
+                        "variants_available": snippet.strip()[:200],
+                    }
+
+        return results
+
+    def get_brand_listing_metrics(self, customer_id: str, brand_names: List[str]) -> Dict[str, Dict[str, str]]:
+        """
+        Calls Setu Copilot AI chatbot for the prompt:
+        "What is the active listing count for the <brand names> along with variation"
+
+        Returns:
+            Dict mapping brand name -> {"active_listings": str, "suppressed_listings": str, "variants_available": str}
+        """
+        valid_brands = [b.strip() for b in brand_names if b and str(b).strip() and str(b).strip().lower() not in ("null", "none")]
+        if not valid_brands:
+            return {}
+
+        brand_query_str = ", ".join(valid_brands)
+        prompt_text = f"What is the active listing count for the {brand_query_str} along with variation"
+        display_name = f"Brand Listing Count for {brand_query_str}"
+
+        endpoint = API4_ENDPOINT.format(customer_id=customer_id)
+        graphql_endpoint = API4_GRAPHQL_ENDPOINT.format(customer_id=customer_id)
+        logger.info("API #4 (Brand Listing Count) started for %s (Prompt: '%s')", customer_id, prompt_text)
+
+        print("\n" + "=" * 30 + f" [DEBUGGING BRAND LISTING AI START: {customer_id}] " + "=" * 30)
+        print(f"🔗 [API #4 Endpoint] {endpoint}")
+        print(f"📝 [AI Brand Prompt] \"{prompt_text}\"")
+
+        # Step 1: Create Session
+        create_session_payload = {
+            "operationName": "SellerCopilotCreateSession",
+            "variables": {
+                "appName": "setu_orchestrator_suv",
+                "displayName": display_name,
+            },
+            "query": "query SellerCopilotCreateSession($appName: String!, $displayName: String) {\n  sellerCopilot_createSession(appName: $appName, displayName: $displayName) {\n    id\n    appName\n    userId\n    __typename\n  }\n}\n",
+        }
+        create_session_headers = {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "operation": "query",
+            "operation-name": "SellerCopilotCreateSession",
+            "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
+            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/settings",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "sec-ch-ua": '"Google Chrome";v="153", "Not_A Brand";v="8", "Chromium";v="153"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "x-internal-env-type": "WEB",
+            "x-requested-with": "XMLHttpRequest",
+        }
+
+        created_session_id = ""
+        try:
+            session_resp = self.api_client.post(
+                endpoint_or_url=graphql_endpoint,
+                json_data=create_session_payload,
+                headers=create_session_headers,
+                timeout=(8, 15),
+            )
+            if isinstance(session_resp, dict):
+                created_session_id = session_resp.get("data", {}).get("sellerCopilot_createSession", {}).get("id", "")
+        except Exception as cs_err:
+            logger.debug("CreateSession error: %s", str(cs_err))
+
+        if not created_session_id:
+            created_session_id = COPILOT_SESSION_ID or str(uuid.uuid4())
+
+        # Step 2: Stream prompt through GraphQL SSE (sellerCopilot_runSseStream)
+        payload = {
+            "query": "subscription sellerCopilot_runSseStream($input: RunSseInput!) {\n  sellerCopilot_runSseStream(input: $input) {\n    data\n  }\n}\n",
+            "variables": {
+                "input": {
+                    "appName": "setu_orchestrator_suv",
+                    "sessionId": created_session_id,
+                    "newMessage": {
+                        "role": "user",
+                        "parts": [{"text": prompt_text}],
+                    },
+                    "stateDelta": {"client_surface": "web"},
+                }
+            },
+            "operationName": "sellerCopilot_runSseStream",
+        }
+
+        headers = {
+            "Accept": "text/event-stream",
+            "Content-Type": "application/json; charset=utf-8",
+            "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
+            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/settings",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "sec-ch-ua": '"Google Chrome";v="153", "Not_A Brand";v="8", "Chromium";v="153"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "x-internal-env-type": "WEB",
+            "x-requested-with": "XMLHttpRequest",
+            "operation": "subscription",
+            "operation-name": "sellerCopilot_runSseStream",
+        }
+
+        sse_response_text = ""
+        try:
+            sse_response_text = self.api_client.post_sse_stream(
+                endpoint_or_url=endpoint,
+                json_data=payload,
+                headers=headers,
+                timeout=(10, 60),
+            )
+        except Exception as e:
+            logger.warning("API #4 (Brand Listing Count) error for customer %s (%s).", customer_id, str(e))
+            sse_response_text = ""
+
+        parsed_brand_metrics = self.parse_brand_listing_response(sse_response_text, valid_brands)
+        print(f"📊 [AI Brand Metrics Parsed]:")
+        for b, m in parsed_brand_metrics.items():
+            print(f"   • {b}: Active={m.get('active_listings')}, Suppressed={m.get('suppressed_listings')}, Variants={m.get('variants_available')}")
+        print("=" * 30 + f" [DEBUGGING BRAND LISTING AI END: {customer_id}] " + "=" * 30 + "\n")
+
+        return parsed_brand_metrics
+
+
+def match_brand_listing_metrics(brand_name: str, brand_metrics_map: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+    """
+    Finds the matching listing metrics for a given brand name from brand_metrics_map
+    using exact, case-insensitive, or substring matching.
+    """
+    if not brand_name or not brand_metrics_map:
+        return {"active_listings": "", "suppressed_listings": "", "variants_available": ""}
+
+    b_clean = brand_name.strip().lower()
+
+    # Exact case-insensitive match
+    for k, v in brand_metrics_map.items():
+        if k.strip().lower() == b_clean:
+            return v
+
+    # Substring / containment match (e.g. 'Vormir (Vormar)' matches 'Vormar' or 'Vormir')
+    for k, v in brand_metrics_map.items():
+        k_clean = k.strip().lower()
+        if b_clean in k_clean or k_clean in b_clean:
+            return v
+
+    # Token match
+    b_tokens = set(re.findall(r"\w+", b_clean))
+    for k, v in brand_metrics_map.items():
+        k_tokens = set(re.findall(r"\w+", k.strip().lower()))
+        if b_tokens and k_tokens and (b_tokens.intersection(k_tokens)):
+            return v
+
+    return {"active_listings": "", "suppressed_listings": "", "variants_available": ""}
+

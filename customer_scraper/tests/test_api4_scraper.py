@@ -137,9 +137,64 @@ class TestAPI4Scraper(unittest.TestCase):
         self.assertIn("40384a72b90d496c", kwargs["endpoint_or_url"])
         self.assertEqual(
             kwargs["json_data"]["variables"]["input"]["newMessage"]["parts"][0]["text"],
-            "June, July and August GMV Data"
+            "GMV for June July and August month"
         )
+
+    def test_parse_brand_listing_response_screenshot_format(self):
+        """
+        Tests parsing exact screenshot response containing:
+        - iBELL: Active Listings = 70+, Suppressed = 30, Variants = WeldingMachine, PowerDrill, HandToolKit, Paint Sprayer, Heat Gun
+        - Vormir (Vormar): Active Listings = Active, Suppressed = 0, Variants = Heat Gun (e.g. VR HG20-50 2000W)
+        - Wintech Pro: Active Listings = 0, Suppressed = 0, Variants = No active listings found in catalog
+        """
+        table_component = {
+            "component": "Table",
+            "columns": ["Brand", "Active Listings", "Suppressed Listings", "Key Verticals/Variants Available"],
+            "cells": [
+                "iBELL", "70+", "30", "WeldingMachine, PowerDrill, HandToolKit, Paint Sprayer, Heat Gun",
+                "Vormir (Vormar)", "Active", "0", "Heat Gun (e.g. VR HG20-50 2000W)",
+                "Wintech Pro", "0", "0", "No active listings found in catalog"
+            ]
+        }
+        ui_json_text = f"```ui-json\n{json.dumps(table_component)}\n```"
+        sse_data = {
+            "data": {
+                "sellerCopilot_runSseStream": {
+                    "data": {
+                        "content": {
+                            "parts": [{"text": ui_json_text}]
+                        }
+                    }
+                }
+            }
+        }
+        raw_sse = f"data: {json.dumps(sse_data)}\n"
+
+        brand_names = ["iBELL", "Vormar", "Wintech Pro"]
+        res = self.scraper.parse_brand_listing_response(raw_sse, brand_names)
+
+        self.assertIn("iBELL", res)
+        self.assertEqual(res["iBELL"]["active_listings"], "70+")
+        self.assertEqual(res["iBELL"]["suppressed_listings"], "30")
+        self.assertEqual(res["iBELL"]["variants_available"], "WeldingMachine, PowerDrill, HandToolKit, Paint Sprayer, Heat Gun")
+
+        self.assertIn("Vormir (Vormar)", res)
+        self.assertEqual(res["Vormir (Vormar)"]["active_listings"], "Active")
+        self.assertEqual(res["Vormir (Vormar)"]["suppressed_listings"], "0")
+        self.assertEqual(res["Vormir (Vormar)"]["variants_available"], "Heat Gun (e.g. VR HG20-50 2000W)")
+
+        self.assertIn("Wintech Pro", res)
+        self.assertEqual(res["Wintech Pro"]["active_listings"], "0")
+        self.assertEqual(res["Wintech Pro"]["suppressed_listings"], "0")
+        self.assertEqual(res["Wintech Pro"]["variants_available"], "No active listings found in catalog")
+
+        # Test match_brand_listing_metrics helper
+        from scrapers.api4_scraper import match_brand_listing_metrics
+        matched_vormar = match_brand_listing_metrics("Vormar", res)
+        self.assertEqual(matched_vormar["active_listings"], "Active")
+        self.assertEqual(matched_vormar["variants_available"], "Heat Gun (e.g. VR HG20-50 2000W)")
 
 
 if __name__ == "__main__":
     unittest.main()
+
