@@ -714,7 +714,7 @@ class API4Scraper:
             return {}
 
         brand_query_str = ", ".join(valid_brands)
-        prompt_text = f"what is the listing count for {brand_query_str} brand with their variation"
+        prompt_text = f"what is the active listing count for {brand_query_str} brand with their variation"
         display_name = f"Brand Listing Count for {brand_query_str}"
 
         endpoint = API4_ENDPOINT.format(customer_id=customer_id)
