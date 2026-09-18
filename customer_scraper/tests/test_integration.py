@@ -188,8 +188,9 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         with open(self.csv_file, "r", encoding="utf-8-sig") as f:
             rows = list(csv.reader(f))
 
-        self.assertEqual(len(rows), 2)  # Header + 1 row
+        self.assertEqual(len(rows), 3)  # Header + 2 brand rows for the 2 unique brands
         self.assertEqual(len(rows[1]), 30)
+        self.assertEqual(rows[1][0], "1")  # Sr No
         self.assertEqual(rows[1][1], cust_id)
         self.assertEqual(rows[1][2], "Unmanaged Seller")
         self.assertEqual(rows[1][3], "ACTIVE")
@@ -201,7 +202,7 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.assertEqual(rows[1][9], "26")  # Approved Brand
         self.assertEqual(rows[1][10], "25")  # Actual Brand Count
         self.assertEqual(rows[1][11], "")   # Request ID
-        self.assertEqual(rows[1][12], "RRCART")  # Brand Name
+        self.assertEqual(rows[1][12], "RRCART")  # Brand Name 1
         self.assertEqual(rows[1][13], "")   # Vertical Name
         self.assertEqual(rows[1][17], "")   # Instagram URL
         self.assertEqual(rows[1][18], "")   # Instagram Followers
@@ -213,6 +214,12 @@ class TestIntegrationScraperFlow(unittest.TestCase):
         self.assertEqual(rows[1][24], "No")  # isD2C (mail.com is generic)
         self.assertEqual(rows[1][25], "")   # Month
         self.assertEqual(rows[1][26], "")   # Gross Amount (GMV)
+
+        # Row 2 (Brand 2: TOY_BRAND, empty supplemental row)
+        self.assertEqual(len(rows[2]), 30)
+        self.assertEqual(rows[2][0], "")
+        self.assertEqual(rows[2][1], "")
+        self.assertEqual(rows[2][12], "TOY_BRAND")
 
     def test_seller_limit_stops_execution(self):
         limit = 2

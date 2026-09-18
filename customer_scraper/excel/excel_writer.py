@@ -606,7 +606,18 @@ class CSVWriter:
         net_amount = data.get("net_amount", "")
         cancelled_amount = data.get("cancelled_amount", "")
 
-        return [[
+        brands_details = data.get("brands_details") or []
+        if brands_details and isinstance(brands_details, list) and len(brands_details) > 0:
+            first_brand = brands_details[0]
+            if isinstance(first_brand, dict):
+                request_id = first_brand.get("request_id") or request_id
+                brand_name = first_brand.get("brand_name") or brand_name
+                vertical_name = first_brand.get("vertical_name") or vertical_name
+                brand_owner = first_brand.get("brand_owner") or brand_owner
+                document_type = first_brand.get("document_type") or document_type
+                brand_website_link = first_brand.get("brand_website_link") or brand_website_link
+
+        main_row = [
             sr_no,
             customer_id,
             account_name,
@@ -637,7 +648,50 @@ class CSVWriter:
             gross_units,
             net_amount,
             cancelled_amount,
-        ]]
+        ]
+
+        rows = [main_row]
+
+        # For additional brands (Brand #2, Brand #3, ...), add rows with only the 5 brand columns populated
+        if brands_details and isinstance(brands_details, list) and len(brands_details) > 1:
+            for b_item in brands_details[1:]:
+                if not isinstance(b_item, dict):
+                    continue
+                sub_row = [
+                    "",  # 0: Sr No
+                    "",  # 1: Customer ID
+                    "",  # 2: Account Name
+                    "",  # 3: Account Status
+                    "",  # 4: Support Manager
+                    "",  # 5: Seller Tier
+                    "",  # 6: Address
+                    "",  # 7: Signed Up Date
+                    "",  # 8: Live Date
+                    "",  # 9: Approved Brand
+                    "",  # 10: Actual Brand Count
+                    b_item.get("request_id", ""),     # 11: Request ID
+                    b_item.get("brand_name", ""),     # 12: Brand Name
+                    b_item.get("vertical_name", ""),  # 13: Vertical Name
+                    b_item.get("brand_owner", ""),    # 14: Brand Owner
+                    b_item.get("document_type", ""),  # 15: Document Type
+                    "",  # 16: Brand Website Link
+                    "",  # 17: Instagram URL
+                    "",  # 18: Instagram Followers
+                    "",  # 19: Mobile Number
+                    "",  # 20: Registered Mobile Number
+                    "",  # 21: Email ID
+                    "",  # 22: Registered Email ID
+                    "",  # 23: Unique Email
+                    "",  # 24: isD2C
+                    "",  # 25: Month
+                    "",  # 26: Gross Amount (GMV)
+                    "",  # 27: Gross Units
+                    "",  # 28: Net Amount
+                    "",  # 29: Cancelled Amount
+                ]
+                rows.append(sub_row)
+
+        return rows
 
     def append_customer(self, customer_data: Dict[str, Any], sr_no: Any) -> bool:
         """

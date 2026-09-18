@@ -326,8 +326,14 @@ class API2Scraper:
         Main entry point for API #2:
         1. Gets counts via requestsV2-count (extracts APPROVED count).
         2. Gets unique case-insensitive brands, vertical names, and request IDs via requestsV2.
-        3. Calls QnA API (questionsV2) sequentially per unique brand request ID.
-           Short-circuits immediately if document_type in (BAL, TM) or valid website link is found.
+        3. Calls QnA API (questionsV2) for all unique brands to extract:
+           - Request ID
+           - Brand Name
+           - Vertical Name
+           - Brand Owner
+           - Document Type
+           - Brand Website Link
+        4. Computes brand_is_d2c (True if ANY brand has BAL/TM or valid website link).
 
         Returns:
             Dict containing:
@@ -335,6 +341,7 @@ class API2Scraper:
                 approved_brand: int
                 actual_brand_count: int
                 unique_brands: List[str]
+                brands_details: List[Dict[str, str]]
                 request_id: str
                 brand_name: str
                 vertical_name: str
@@ -357,6 +364,7 @@ class API2Scraper:
                 "approved_brand": 0,
                 "actual_brand_count": 0,
                 "unique_brands": [],
+                "brands_details": [],
                 "request_id": "",
                 "brand_name": "",
                 "vertical_name": "",
@@ -376,17 +384,14 @@ class API2Scraper:
         req_to_brand_map = getattr(self, "_last_req_to_brand_map", {})
         req_to_vertical_map = getattr(self, "_last_req_to_vertical_map", {})
 
-        selected_request_id = ""
-        selected_brand_name = ""
-        selected_vertical_name = ""
-        selected_brand_owner = ""
-        selected_document_type = ""
-        selected_brand_website_link = ""
+        brands_details: List[Dict[str, str]] = []
         brand_is_d2c = False
 
-        # Iterate sequentially over unique brands and their request IDs
+        # Iterate sequentially over ALL unique brands and query QnA per unique brand
         for brand_key, req_ids in brand_requests_map.items():
             current_brand_display = brand_display_names.get(brand_key, brand_key)
+            brand_entry: Optional[Dict[str, str]] = None
+
             for req_id in req_ids:
                 if not req_id:
                     continue
@@ -398,15 +403,6 @@ class API2Scraper:
                 b_name = req_to_brand_map.get(req_id, current_brand_display)
                 v_name = req_to_vertical_map.get(req_id, "")
 
-                # Record first encountered details as baseline
-                if not selected_request_id:
-                    selected_request_id = req_id
-                    selected_brand_name = b_name
-                    selected_vertical_name = v_name
-                    selected_brand_owner = b_owner
-                    selected_document_type = doc_type
-                    selected_brand_website_link = web_link
-
                 # Check D2C eligibility conditions from Brand verification
                 is_doc_match = doc_type.upper() in ("BAL", "TM")
                 is_link_match = bool(
@@ -416,46 +412,76 @@ class API2Scraper:
                 )
 
                 if is_doc_match or is_link_match:
-                    selected_request_id = req_id
-                    selected_brand_name = b_name
-                    selected_vertical_name = v_name
-                    selected_brand_owner = b_owner
-                    selected_document_type = doc_type
-                    selected_brand_website_link = web_link
                     brand_is_d2c = True
                     logger.info(
-                        "🎯 [D2C BRAND MATCH] Seller %s: Request ID %s (Brand: '%s', Vertical: '%s') qualified for D2C (DocType: '%s', Website: '%s'). Short-circuiting remaining brand checks.",
+                        "🎯 [D2C BRAND MATCH] Seller %s: Request ID %s (Brand: '%s', Vertical: '%s') qualified for D2C (DocType: '%s', Website: '%s').",
                         customer_id,
                         req_id,
-                        selected_brand_name,
-                        selected_vertical_name,
+                        b_name,
+                        v_name,
                         doc_type,
                         web_link,
                     )
+
+                curr_entry = {
+                    "request_id": req_id,
+                    "brand_name": b_name,
+                    "vertical_name": v_name,
+                    "brand_owner": b_owner,
+                    "document_type": doc_type,
+                    "brand_website_link": web_link,
+                }
+
+                if brand_entry is None:
+                    brand_entry = curr_entry
+                elif is_doc_match or is_link_match:
+                    brand_entry = curr_entry
                     break
 
-            if brand_is_d2c:
-                break
+                if doc_type or b_owner or web_link:
+                    break
 
-        # Fallback for brand_name / vertical_name if not set during loop (e.g. no request IDs)
-        if not selected_brand_name and brand_display_names:
-            selected_brand_name = next(iter(brand_display_names.values()), "")
-        elif not selected_brand_name and brand_requests_map:
-            selected_brand_name = next(iter(brand_requests_map.keys()), "")
+            if brand_entry is None:
+                v_name = next((v for r, v in req_to_vertical_map.items() if req_to_brand_map.get(r) == current_brand_display), "")
+                brand_entry = {
+                    "request_id": "",
+                    "brand_name": current_brand_display,
+                    "vertical_name": v_name,
+                    "brand_owner": "",
+                    "document_type": "",
+                    "brand_website_link": "",
+                }
 
-        if not selected_vertical_name and req_to_vertical_map:
-            selected_vertical_name = next((v for v in req_to_vertical_map.values() if v), "")
+            brands_details.append(brand_entry)
+
+        # Select baseline / primary details from the first brand
+        if brands_details:
+            selected_request_id = brands_details[0].get("request_id", "")
+            selected_brand_name = brands_details[0].get("brand_name", "")
+            selected_vertical_name = brands_details[0].get("vertical_name", "")
+            selected_brand_owner = brands_details[0].get("brand_owner", "")
+            selected_document_type = brands_details[0].get("document_type", "")
+            selected_brand_website_link = brands_details[0].get("brand_website_link", "")
+        else:
+            selected_request_id = ""
+            selected_brand_name = ""
+            selected_vertical_name = ""
+            selected_brand_owner = ""
+            selected_document_type = ""
+            selected_brand_website_link = ""
 
         # Strict isolation: if no approved brands or empty map, brand_name and vertical_name MUST be blank
         if approved_count <= 0 or not brand_requests_map:
             selected_brand_name = ""
             selected_vertical_name = ""
+            brands_details = []
 
         return {
             "customer_id": str(customer_id).strip(),
             "approved_brand": approved_count,
             "actual_brand_count": actual_brand_count,
             "unique_brands": sorted(list(brand_requests_map.keys())),
+            "brands_details": brands_details,
             "request_id": selected_request_id,
             "brand_name": selected_brand_name,
             "vertical_name": selected_vertical_name,
@@ -470,4 +496,5 @@ class API2Scraper:
     def get_listings_and_brand(self, customer_id: str) -> Dict[str, Any]:
         """Alias for get_brand_approval_details."""
         return self.get_brand_approval_details(customer_id)
+
 
