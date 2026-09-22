@@ -175,11 +175,43 @@ class API1Scraper:
             # Secondary fallback if structure varies
             seller_tier = self._safe_get(result, "darwin_tier_v2", "tier_name")
 
-        # 5. Signed Up Date: result.profileInfo.created_at (formatted to date only)
+        # 5. Address: result.pickupAddressLine1 + result.pickupAddressLine2 + result.profileInfo.city + result.profileInfo.pincode (with fallbacks)
+        line1 = self._safe_get(result, "pickupAddressLine1")
+        line2 = self._safe_get(result, "pickupAddressLine2")
+
+        if not line1:
+            line1 = self._safe_get(result, "pickupAddress", "addressLine1")
+        if not line2:
+            line2 = self._safe_get(result, "pickupAddress", "addressLine2")
+        if not line1:
+            line1 = self._safe_get(result, "registeredAddressLine1")
+        if not line2:
+            line2 = self._safe_get(result, "registeredAddressLine2")
+
+        city = self._safe_get(result, "profileInfo", "city")
+        if not city:
+            city = self._safe_get(result, "pickupCity")
+        if not city:
+            city = self._safe_get(result, "city")
+
+        pincode = self._safe_get(result, "profileInfo", "pincode")
+        if not pincode:
+            pincode = self._safe_get(result, "pickupPincode")
+        if not pincode:
+            pincode = self._safe_get(result, "pincode")
+
+        addr_parts = [
+            p.strip()
+            for p in (line1, line2, city, pincode)
+            if p and str(p).strip() and str(p).strip().lower() not in ("null", "none")
+        ]
+        address = " ".join(addr_parts)
+
+        # 6. Signed Up Date: result.profileInfo.created_at (formatted to date only)
         raw_signed_up = self._safe_get(result, "profileInfo", "created_at")
         signed_up_date = self._format_date_only(raw_signed_up)
 
-        # 6. Live Date: result.liveDate (formatted to date only)
+        # 7. Live Date: result.liveDate (formatted to date only)
         raw_live_date = self._safe_get(result, "liveDate")
         live_date = self._format_date_only(raw_live_date)
 
@@ -191,6 +223,8 @@ class API1Scraper:
             "account_status": account_status,
             "support_manager": support_manager,
             "seller_tier": seller_tier,
+            "address": address,
             "signed_up_date": signed_up_date,
             "live_date": live_date,
         }
+

@@ -44,6 +44,7 @@ from api.api_client import APIClient, APIError, NetworkConnectionError
 from scrapers.api1_scraper import API1Scraper
 from scrapers.api2_scraper import API2Scraper
 from scrapers.api3_scraper import API3Scraper
+from scrapers.api4_scraper import API4Scraper
 from scrapers.instagram_scraper import InstagramScraper
 from excel.excel_writer import CSVWriter, ExcelWriter
 
@@ -428,7 +429,7 @@ def main():
 
     logger.info("==========================================")
     logger.info("START - Flipkart Customer Scraping Automation")
-    logger.info("  Mode: API #1 (Details) + API #2 (Approvals & QnA) + API #3 (Contacts)")
+    logger.info("  Mode: API #1 (Details) + API #2 (Approvals & QnA) + API #3 (Contacts) + API #4 (Setu Copilot GMV)")
     logger.info("  Save Policy: ALL processed records saved (with isD2C: Yes / No)")
     logger.info("  Target Limit: %d records", max_scrape_limit)
     logger.info("  Input File: %s", INPUT_FILE_PATH.name)
@@ -453,6 +454,7 @@ def main():
     api1 = API1Scraper(api_client)
     api2 = API2Scraper(api_client)
     api3 = API3Scraper(api_client)
+    api4 = API4Scraper(api_client)
     insta_scraper = InstagramScraper()
     
     csv_writer = CSVWriter(output_dir=OUTPUT_DIR, chunk_size=chunk_size)
@@ -513,6 +515,7 @@ def main():
                     account_status = api1_data.get("account_status", "")
                     support_mgr = api1_data.get("support_manager", "No")
                     tier = api1_data.get("seller_tier", "")
+                    address = api1_data.get("address", "")
 
                     # Step 2: Execute API #2 (Brand Approval, Actual Brand Count & QnA Questions)
                     api2_data = api2.get_brand_approval_details(customer_id)
@@ -520,6 +523,7 @@ def main():
                     actual_brand_count = api2_data.get("actual_brand_count", 0)
                     request_id = api2_data.get("request_id", "")
                     brand_name = api2_data.get("brand_name", "")
+                    vertical_name = api2_data.get("vertical_name") or api2_data.get("vertical", "")
                     brand_owner = api2_data.get("brand_owner", "")
                     document_type = api2_data.get("document_type", "")
                     brand_website_link = api2_data.get("brand_website_link", "")
@@ -530,7 +534,40 @@ def main():
                     unique_email = api3_data.get("unique_email", "No")
                     is_email_d2c = str(unique_email).strip().lower() == "yes"
 
-                    # Step 4: Search Instagram for Brand Name & Followers (with strict brand-in-URL validation)
+                    # Step 4a: Execute API #4 (Setu Copilot SSE - 3-Month GMV Metrics)
+                    api4_data = api4.get_seller_gmv_metrics(customer_id)
+                    month = api4_data.get("month", "")
+                    gross_amount = api4_data.get("gross_amount", "")
+                    gross_units = api4_data.get("gross_units", "")
+                    net_amount = api4_data.get("net_amount", "")
+                    cancelled_amount = api4_data.get("cancelled_amount", "")
+
+                    # Step 4b: Execute API #4 (Setu Copilot SSE - Brand Listing Count & Variation)
+                    brands_details = api2_data.get("brands_details", [])
+                    brand_names_for_query = [
+                        b.get("brand_name", "").strip()
+                        for b in brands_details
+                        if b.get("brand_name") and str(b.get("brand_name")).strip()
+                    ]
+                    if not brand_names_for_query and brand_name:
+                        brand_names_for_query = [brand_name]
+
+                    if brand_names_for_query:
+                        from scrapers.api4_scraper import match_brand_listing_metrics
+                        brand_listing_metrics_map = api4.get_brand_listing_metrics(customer_id, brand_names_for_query)
+                        for b_item in brands_details:
+                            b_name_curr = b_item.get("brand_name", "")
+                            matched_metrics = match_brand_listing_metrics(b_name_curr, brand_listing_metrics_map)
+                            b_item["listing_count"] = matched_metrics.get("listing_count") or matched_metrics.get("active_listings", "")
+                            b_item["status"] = matched_metrics.get("status", "")
+                            b_item["active_listings"] = matched_metrics.get("active_listings", "")
+                            b_item["suppressed_listings"] = matched_metrics.get("suppressed_listings", "")
+                            b_item["variants_available"] = matched_metrics.get("variants_available", "")
+
+                    primary_listing_count = brands_details[0].get("listing_count", "") if brands_details else ""
+                    primary_status = brands_details[0].get("status", "") if brands_details else ""
+
+                    # Step 5: Search Instagram for Brand Name & Followers (with strict brand-in-URL validation)
                     instagram_url = ""
                     instagram_followers = ""
                     from scrapers.instagram_scraper import extract_instagram_url_from_string, is_brand_in_instagram_url
@@ -591,6 +628,12 @@ def main():
                         **api1_data,
                         **api2_data,
                         **api3_data,
+                        **api4_data,
+                        "brands_details": brands_details,
+                        "listing_count": primary_listing_count,
+                        "status": primary_status,
+                        "active_listings": primary_listing_count,
+                        "suppressed_listings": primary_status,
                         "instagram_url": instagram_url,
                         "instagram_followers": instagram_followers,
                         "unique_email": unique_email,
@@ -599,7 +642,7 @@ def main():
                         "is_d2c": is_d2c_str,
                     }
 
-                    # Step 5: Save ALL processed records to CSV/Excel
+                    # Step 6: Save ALL processed records to CSV/Excel
                     save_success = csv_writer.append_customer(combined_record, sr_no=current_sr_no)
                     if save_success:
                         progress_tracker.mark_completed(customer_id, sheet_name=sheet_name, row_index=row_idx)
@@ -610,8 +653,8 @@ def main():
                             d2c_no_count += 1
 
                         logger.info(
-                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Appr: %s | Act: %s | ReqID: %s | Brand: %s | BrOwner: %s | Doc: %s | Web: %s | Insta: %s | Followers: %s | UniqEmail: %s | isD2C: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
-                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, approved_brand, actual_brand_count, request_id or "-", brand_name or "-", brand_owner or "-", document_type or "-", brand_website_link or "-", instagram_url or "-", instagram_followers or "-", unique_email, is_d2c_str, total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
+                            "[Sheet: %s | Row: %d | Batch #%d (%d/%d)] ID: %s | Account: %s | Tier: %s | Addr: %s | Appr: %s | Act: %s | ReqID: %s | Brand: %s | Vertical: %s | BrOwner: %s | Doc: %s | ListCount: %s | Status: %s | Web: %s | Insta: %s | Followers: %s | UniqEmail: %s | isD2C: %s | Month: %s | GMV: %s -> SAVED TO CSV (Total Saved: %d/%d | D2C Yes: %d | Sr No: %d | File: %s)",
+                            sheet_name, row_idx, batch_num, batch_pos, chunk_size, customer_id, account_name, tier, address or "-", approved_brand, actual_brand_count, request_id or "-", brand_name or "-", vertical_name or "-", brand_owner or "-", document_type or "-", primary_listing_count or "-", primary_status or "-", brand_website_link or "-", instagram_url or "-", instagram_followers or "-", unique_email, is_d2c_str, month or "-", gross_amount or "-", total_saved_in_session, max_scrape_limit, d2c_yes_count, current_sr_no, target_csv.name
                         )
                         if total_saved_in_session % 100 == 0:
                             logger.info(
@@ -629,6 +672,7 @@ def main():
 
                     total_evaluated_in_session += 1
                     consecutive_auth_failures = 0
+                    time.sleep(1)  # Brief pause between sellers for consistent server responses
                     break
 
                 except AuthExpiredError as auth_err:

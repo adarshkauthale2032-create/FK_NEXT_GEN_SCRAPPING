@@ -20,6 +20,8 @@ class TestAPI1Scraper(unittest.TestCase):
         self.mock_client.get.return_value = {
             "result": {
                 "displayName": "Seller One",
+                "pickupAddressLine1": "Thavallengal complex",
+                "pickupAddressLine2": "Perinthalmanna, near Fire station",
                 "supportRole": {
                     "tier_type": "SUPPORT",
                     "role_name": None,
@@ -42,6 +44,8 @@ class TestAPI1Scraper(unittest.TestCase):
                     }
                 },
                 "profileInfo": {
+                    "city": "MALAPPURAM",
+                    "pincode": "679322",
                     "created_at": "2022-01-15T10:00:00Z"
                 },
                 "liveDate": "2022-02-01"
@@ -54,6 +58,7 @@ class TestAPI1Scraper(unittest.TestCase):
         self.assertEqual(res["account_status"], "ACTIVE")
         self.assertEqual(res["support_manager"], "No")
         self.assertEqual(res["seller_tier"], "Silver")
+        self.assertEqual(res["address"], "Thavallengal complex Perinthalmanna, near Fire station MALAPPURAM 679322")
         self.assertEqual(res["signed_up_date"], "2022-01-15")
         self.assertEqual(res["live_date"], "2022-02-01")
 
@@ -94,6 +99,7 @@ class TestAPI1Scraper(unittest.TestCase):
         self.assertEqual(res["account_name"], "Seller Two")
         self.assertEqual(res["account_status"], "BLOCKED")
         self.assertEqual(res["seller_tier"], "Gold")
+        self.assertEqual(res["address"], "")
 
     def test_null_and_missing_handling(self):
         self.mock_client.get.return_value = {"result": None}
@@ -103,6 +109,7 @@ class TestAPI1Scraper(unittest.TestCase):
         self.assertEqual(res["account_status"], "")
         self.assertEqual(res["support_manager"], "No")
         self.assertEqual(res["seller_tier"], "")
+        self.assertEqual(res["address"], "")
         self.assertEqual(res["signed_up_date"], "")
         self.assertEqual(res["live_date"], "")
 
@@ -136,10 +143,10 @@ class TestAPI2Scraper(unittest.TestCase):
             "APPROVED": 4,
         }
         mock_records = [
-            {"brand_name": "BRAND", "request_status": "Approved"},
-            {"brand_name": "Brand", "request_status": "Approved"},
-            {"brand_name": "bRAND", "request_status": "Approved"},
-            {"brand_name": "OTHER_BRAND", "request_status": "Approved"},
+            {"brand_name": "BRAND", "vertical": "Eyewear", "request_status": "Approved"},
+            {"brand_name": "Brand", "vertical": "Eyewear", "request_status": "Approved"},
+            {"brand_name": "bRAND", "vertical": "Eyewear", "request_status": "Approved"},
+            {"brand_name": "OTHER_BRAND", "vertical": "Clothing", "request_status": "Approved"},
             {"brand_name": "DISAPPROVED_BRAND", "request_status": "Disapproved"},
         ]
         self.mock_client.post.return_value = mock_records
@@ -149,13 +156,43 @@ class TestAPI2Scraper(unittest.TestCase):
         # "BRAND", "Brand", "bRAND" deduplicate to 1, plus "OTHER_BRAND" = 2 unique approved brands
         self.assertEqual(res["actual_brand_count"], 2)
         self.assertEqual(res["brand_name"], "BRAND")
+        self.assertEqual(res["vertical_name"], "Eyewear")
         self.assertTrue("BRAND" in res["unique_brands"] or "brand" in res["unique_brands"])
         self.assertTrue("OTHER_BRAND" in res["unique_brands"] or "other_brand" in res["unique_brands"])
+
+    def test_brand_isolation_across_consecutive_calls(self):
+        """
+        Tests that when seller 1 has brand 'Lenskart', a subsequent seller 2
+        with 0 approved brands has brand_name == '' and vertical_name == ''
+        (no state leakage between sellers).
+        """
+        # Seller 1 has 1 approved brand: Lenskart
+        self.mock_client.get.return_value = {"ALL": 1, "APPROVED": 1}
+        self.mock_client.post.return_value = [
+            {"request_id": "REQ_100", "brand_name": "Lenskart", "vertical": "Eyewear", "request_status": "Approved"}
+        ]
+        res1 = self.scraper.get_brand_approval_details("SELLER_1")
+        self.assertEqual(res1["brand_name"], "Lenskart")
+        self.assertEqual(res1["vertical_name"], "Eyewear")
+
+        # Seller 2 has 0 approved brands
+        self.mock_client.get.return_value = {"ALL": 0, "APPROVED": 0}
+        self.mock_client.post.return_value = []
+        res2 = self.scraper.get_brand_approval_details("SELLER_2")
+        self.assertEqual(res2["brand_name"], "")
+        self.assertEqual(res2["vertical_name"], "")
+        self.assertEqual(res2["approved_brand"], 0)
+        self.assertEqual(res2["actual_brand_count"], 0)
+
+        # Seller 3 has 0 approved brands
+        res3 = self.scraper.get_brand_approval_details("SELLER_3")
+        self.assertEqual(res3["brand_name"], "")
+        self.assertEqual(res3["vertical_name"], "")
 
     def test_approved_7_with_all_unique_brands_gives_7(self):
         self.mock_client.get.return_value = {"ALL": 10, "APPROVED": 7}
         mock_records = [
-            {"brand_name": f"UNIQUE_BRAND_{i}", "request_status": "Approved"}
+            {"brand_name": f"UNIQUE_BRAND_{i}", "vertical": "General", "request_status": "Approved"}
             for i in range(1, 8)
         ]
         self.mock_client.post.return_value = mock_records
@@ -179,6 +216,8 @@ class TestAPI2Scraper(unittest.TestCase):
         res = self.scraper.get_brand_approval_details("ID_ZERO")
         self.assertEqual(res["approved_brand"], 0)
         self.assertEqual(res["actual_brand_count"], 0)
+        self.assertEqual(res["brand_name"], "")
+        self.assertEqual(res["vertical_name"], "")
 
 
 class TestAPI3Scraper(unittest.TestCase):

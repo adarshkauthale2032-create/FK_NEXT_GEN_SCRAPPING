@@ -8,7 +8,7 @@ session management, auth expiry detection, and standard JSON response parsing.
 import json
 import logging
 import time
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import requests
 
 from auth.auth_manager import AuthManager, AuthExpiredError
@@ -254,3 +254,146 @@ class APIClient:
     def post(self, endpoint_or_url: str, json_data: Optional[Dict[str, Any]] = None, **kwargs) -> Any:
         """Helper for POST requests."""
         return self.request("POST", endpoint_or_url, json_data=json_data, **kwargs)
+
+    def post_sse_stream(
+        self,
+        endpoint_or_url: str,
+        json_data: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        timeout: Union[int, Tuple[int, int]] = (10, 60),
+    ) -> str:
+        """
+        Executes a POST request against a GraphQL Server-Sent Events (SSE) stream endpoint,
+        handles authentication/CSRF tokens and auth refresh, and collects all streamed text.
+        """
+        full_url = self._build_url(endpoint_or_url)
+        auth_attempts = 0
+
+        while auth_attempts <= MAX_AUTH_RETRIES:
+            session = self.auth_manager.get_session()
+
+            req_headers = dict(self.auth_manager.headers)
+            req_headers["Accept"] = "text/event-stream"
+            req_headers["Content-Type"] = "application/json; charset=utf-8"
+            req_headers["operation"] = "subscription"
+            req_headers["operation-name"] = "sellerCopilot_runSseStream"
+
+            if headers:
+                req_headers.update(headers)
+
+            current_csrf = self.auth_manager.get_csrf_token()
+            if current_csrf:
+                import urllib.parse
+                clean_csrf = urllib.parse.unquote(str(current_csrf)).strip()
+                req_headers["FK-CSRF-TOKEN"] = clean_csrf
+                req_headers["fk-csrf-token"] = clean_csrf
+                session.headers["FK-CSRF-TOKEN"] = clean_csrf
+                session.headers["fk-csrf-token"] = clean_csrf
+
+            cookie_str = self.auth_manager.get_cookie_header_string()
+            if cookie_str:
+                req_headers["Cookie"] = cookie_str
+
+            retry_count = 0
+            while retry_count < MAX_REQUEST_RETRIES:
+                try:
+                    print(f"📡 [API #4 SSE] Sending request to: {full_url}")
+                    logger.debug("Executing SSE stream POST to %s (Attempt %d)", full_url, retry_count + 1)
+                    response = session.post(
+                        url=full_url,
+                        json=json_data,
+                        headers=req_headers,
+                        timeout=timeout,
+                        stream=True,
+                    )
+                    print(f"📥 [API #4 SSE] HTTP Status: {response.status_code}")
+
+                    if self.auth_manager.is_session_expired(response):
+                        print("⚠️ [API #4 SSE] Session expired detected!")
+                        logger.warning("⚠️ [AUTH EXPIRED on SSE] Session expired on %s", full_url)
+                        self.auth_manager.clear_session()
+                        break
+
+                    if response.status_code == 200:
+                        lines = []
+                        start_t = time.time()
+                        max_stream_duration = 60  # Max 60s for full LLM SSE stream
+                        event_count = 0
+
+                        for chunk in response.iter_lines(decode_unicode=True):
+                            if chunk is not None:
+                                lines.append(chunk)
+                                chunk_str = chunk.strip()
+
+                                if chunk_str:
+                                    # Print preview of streaming lines in real-time
+                                    preview = (chunk_str[:120] + "...") if len(chunk_str) > 120 else chunk_str
+                                    print(f"   [SSE Stream] {preview}")
+
+                                if chunk_str.startswith("event:"):
+                                    event_count += 1
+
+                                # Termination conditions: server indicates completion marker
+                                if chunk_str == "event: complete" or chunk_str == "data: [DONE]":
+                                    print(f"✅ [API #4 SSE] Stream completion marker received ('{chunk_str}').")
+                                    break
+
+                            if time.time() - start_t > max_stream_duration:
+                                print(f"⏱️ [API #4 SSE] Reached maximum stream duration ({max_stream_duration}s).")
+                                break
+
+                        try:
+                            response.close()
+                        except Exception:
+                            pass
+
+                        print(f"📦 [API #4 SSE] Total lines received: {len(lines)} in {round(time.time() - start_t, 2)}s.")
+                        return "\n".join(lines)
+
+                    if 400 <= response.status_code < 500:
+                        err_body = response.text[:300] if response.text else ""
+                        print(f"❌ [API #4 SSE] Client error HTTP {response.status_code}: {err_body}")
+                        raise APIResponseError(f"HTTP Client Error {response.status_code} for {full_url}: {err_body}", status_code=response.status_code)
+
+                    if response.status_code >= 500:
+                        retry_count += 1
+                        time.sleep(BACKOFF_FACTOR ** retry_count)
+                        continue
+
+                except requests.Timeout as to_err:
+                    retry_count += 1
+                    print(f"⏱️ [API #4 SSE Attempt {retry_count}/{MAX_REQUEST_RETRIES}] Read timed out after waiting for stream chunk: {to_err}")
+                    if retry_count < MAX_REQUEST_RETRIES:
+                        time.sleep(BACKOFF_FACTOR ** retry_count)
+                    else:
+                        print(f"⚠️ [API #4 SSE] Read timeout limit reached for {full_url}. Returning empty stream.")
+                        return ""
+
+                except requests.ConnectionError as net_err:
+                    retry_count += 1
+                    print(f"🔌 [API #4 SSE Attempt {retry_count}/{MAX_REQUEST_RETRIES}] Connection error: {net_err}")
+                    if retry_count < MAX_REQUEST_RETRIES:
+                        time.sleep(BACKOFF_FACTOR ** retry_count)
+                    else:
+                        print(f"⚠️ [API #4 SSE] Network connection failed for {full_url}. Returning empty stream.")
+                        return ""
+                except APIError:
+                    raise
+                except Exception as ex:
+                    print(f"⚠️ [API #4 SSE] Exception during stream request: {str(ex)}")
+                    return ""
+
+            auth_attempts += 1
+            if auth_attempts <= MAX_AUTH_RETRIES:
+                print("🔄 [API #4 SSE] Refreshing session and retrying SSE stream call...")
+                logger.info("🔄 Refreshing session for SSE stream call...")
+                try:
+                    self.auth_manager.refresh_session(target_api="all")
+                    continue
+                except Exception as auth_err:
+                    raise AuthExpiredError(f"Auth refresh failed for SSE stream: {str(auth_err)}")
+            else:
+                raise AuthExpiredError("Exceeded max auth retries on SSE stream endpoint.")
+
+        return ""
+
