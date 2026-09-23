@@ -851,4 +851,3 @@ def match_brand_listing_metrics(brand_name: str, brand_metrics_map: Dict[str, Di
             return v
 
     return {"listing_count": "", "status": "", "active_listings": "", "suppressed_listings": "", "variants_available": ""}
-
