@@ -22,10 +22,25 @@ INPUT_EXCEL_CANDIDATES = [
 ]
 
 def resolve_input_file() -> Path:
-    """Finds the existing input file path among configured candidates."""
-    for p in INPUT_EXCEL_CANDIDATES:
-        if p.exists():
-            return p
+    """
+    Finds which file in input/ to read seller IDs from.
+    Priority: any .xlsx/.xlsm/.xltx file present > any .csv file present > any .txt file present.
+    Falls back to input.xlsx (auto-created on first run) if the folder has none of the above.
+    """
+    if INPUT_DIR.exists():
+        for pattern in ("*.xlsx", "*.xlsm", "*.xltx"):
+            xlsx_files = sorted(p for p in INPUT_DIR.glob(pattern) if not p.name.startswith("~$"))
+            if xlsx_files:
+                return xlsx_files[0]
+
+        csv_files = sorted(INPUT_DIR.glob("*.csv"))
+        if csv_files:
+            return csv_files[0]
+
+        txt_files = sorted(INPUT_DIR.glob("*.txt"))
+        if txt_files:
+            return txt_files[0]
+
     return INPUT_DIR / "input.xlsx"
 
 INPUT_FILE_PATH = resolve_input_file()

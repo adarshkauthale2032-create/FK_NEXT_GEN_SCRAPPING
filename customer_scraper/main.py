@@ -1,13 +1,14 @@
 """
 Main Orchestration Script for Customer Scraping Automation.
 
-Processes customer/seller IDs from multi-sheet Excel files (Merged Data 1, 2, 3) or text files,
+Processes customer/seller IDs from multi-sheet Excel files (Merged Data 1, 2, 3), CSV files, or text files,
 executes API #1 and API #3 sequentially, evaluates D2C status, saves exclusively D2C ('Yes')
 records to CSV with sequential Sr No, tracks all evaluated sellers in progress.json,
 and automatically stops once 10,000 D2C records are collected (with full resumability).
 """
 
 import argparse
+import csv
 from datetime import datetime
 import json
 import logging
@@ -363,7 +364,69 @@ def stream_customer_ids(
                 yield from stream_customer_ids(txt_fallback)
             return
 
-    # 2. Handle Plain Text (.txt) input
+    # 2. Handle CSV (.csv) input with the same header-detection logic as Excel
+    if file_path.suffix.lower() == ".csv":
+        logger.info("Streaming seller IDs from CSV '%s'", file_path.name)
+        seller_col_idx: Optional[int] = None
+        header_found = False
+
+        try:
+            with open(file_path, "r", newline="", encoding="utf-8-sig") as f:
+                reader = csv.reader(f)
+                for row_idx, row in enumerate(reader, start=1):
+                    # Check top 5 rows for column header
+                    if not header_found and row_idx <= 5:
+                        # Pass 1: Prioritize exact 'Seller ID' / 'seller_id' / 'sellerid'
+                        for col_idx, cell_val in enumerate(row):
+                            if cell_val is not None and str(cell_val).strip():
+                                col_clean = str(cell_val).strip().lower().replace(" ", "_").replace("-", "_")
+                                if col_clean in ("seller_id", "sellerid", "seller_account_id"):
+                                    seller_col_idx = col_idx
+                                    header_found = True
+                                    logger.info("CSV '%s': Found primary 'Seller ID' header in column %d ('%s')", file_path.name, col_idx + 1, str(cell_val).strip())
+                                    break
+
+                        # Pass 2: Secondary check for 'customer_id' if seller_id not present
+                        if not header_found:
+                            for col_idx, cell_val in enumerate(row):
+                                if cell_val is not None and str(cell_val).strip():
+                                    col_clean = str(cell_val).strip().lower().replace(" ", "_").replace("-", "_")
+                                    if col_clean in ("customer_id", "customerid"):
+                                        seller_col_idx = col_idx
+                                        header_found = True
+                                        logger.info("CSV '%s': Found secondary 'Customer ID' header in column %d ('%s')", file_path.name, col_idx + 1, str(cell_val).strip())
+                                        break
+
+                        if header_found:
+                            continue
+
+                    # If header wasn't found by row 6, auto-detect column containing valid IDs
+                    if not header_found and row_idx > 5:
+                        for col_idx, cell_val in enumerate(row):
+                            if is_valid_seller_id(cell_val):
+                                seller_col_idx = col_idx
+                                header_found = True
+                                logger.info("CSV '%s': Auto-detected Seller ID in column %d", file_path.name, col_idx + 1)
+                                break
+                        if not header_found:
+                            seller_col_idx = 0  # Default to first column
+                            header_found = True
+
+                    # Extract seller ID
+                    if seller_col_idx is not None and len(row) > seller_col_idx:
+                        val = row[seller_col_idx]
+                        if val is not None:
+                            clean_id = str(val).strip()
+                            if is_valid_seller_id(clean_id):
+                                yield (file_path.stem, row_idx, clean_id)
+                            elif clean_id and clean_id.lower() not in ("none", "null", ""):
+                                logger.debug("CSV '%s' Row %d: Skipped non-seller value '%s'", file_path.name, row_idx, clean_id)
+        except Exception as e:
+            logger.error("Failed to stream CSV input file %s: %s", file_path, str(e))
+
+        return
+
+    # 3. Handle Plain Text (.txt) input
     row_idx = 0
     with open(file_path, "r", encoding="utf-8") as f:
         for line in f:
