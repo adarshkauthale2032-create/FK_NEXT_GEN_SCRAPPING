@@ -1,6 +1,6 @@
 # Flipkart Seller Support Customer Scraping Automation
 
-A production-ready, modular, and resilient Python automation system to extract seller details, listing data, and contact info from Flipkart Seller Support APIs (`suv-flipkart.seller-support.fkcloud.it`), apply custom business rules, and continuously write clean tabular data into **CSV** (`output/scraped_data.csv`).
+A production-ready, modular, and resilient Python automation system to extract seller details, brand approval counts, and contact info from Flipkart Seller Support APIs (`suv-flipkart.seller-support.fkcloud.it`), apply custom business rules, and continuously write clean tabular data into **CSV** (`output/scraped_data.csv`).
 
 ---
 
@@ -28,8 +28,8 @@ customer_scraper/
 ├── scrapers/                   # Isolated API scraper modules
 │   ├── __init__.py
 │   ├── api1_scraper.py         # API #1: Seller Details & Support Manager logic
-│   ├── api2_scraper.py         # API #2: Active Listings & 12-of-20 Brand Rule
-│   └── api3_scraper.py         # API #3: Seller Contact Details
+│   ├── api2_scraper.py         # API #2: Approved Brand count & Actual (unique) Brand Count
+│   └── api3_scraper.py         # API #3: Seller Contact Details & Unique Email check
 │
 ├── excel/                      # Persistence layer (CSV / Excel compatibility)
 │   ├── __init__.py
@@ -162,31 +162,22 @@ python main.py
 
 ## 7. Business Logic & Processing Flow
 
-For each Customer ID:
+For each Customer ID, all three APIs run (no branch skips API calls):
 1. **API #1 (`getSellerDetails`):**
-   * Extracts Account Name, Support Manager status, Seller Tier, Signed Up Date, Live Date.
+   * Extracts Account Name, Account Status, Support Manager status, Seller Tier, Signed Up Date, Live Date.
    * **Support Manager Rule:**
      * If `role_name`, `user_id`, `email_id`, `name`, `phone_num`, or `manager_email_id` contains any non-null/non-empty value $\to$ `Support Manager = Yes`.
      * If all are null/empty $\to$ `Support Manager = No`.
-   * **Support Manager = Yes Branch:**
-     * Immediately saves API #1 data to CSV.
-     * **Skips API #2 and API #3**.
-     * Marks customer completed and moves to next ID.
-2. **API #2 (`listingsDataForStates`):**
-   * Requests up to 20 active listings.
-   * Extracts all product titles.
-   * **12-of-20 Brand Rule:**
-     * If the SAME brand appears **strictly more than 12 times** (`count > 12`):
-       * `Is Brand = Possibly a Brand`
-       * `Brand Name = <brand>`
-     * Otherwise:
-       * `Is Brand = Possibly a Seller`
-       * `Brand Name = ""`
+2. **API #2 (`requestsV2-count` + `requestsV2`):**
+   * Fetches the count of `APPROVED` brand-approval requests $\to$ `Approved Brand`.
+   * Fetches all approval request records and deduplicates brand names case-insensitively $\to$ `Actual Brand Count`.
 3. **API #3 (`getSellerContacts`):**
    * Extracts Mobile Number, Registered Mobile, Email ID, Registered Email.
-4. **CSV Persistence:**
-   * Combines all data.
-   * Each product listing title is written as a separate row linked under that customer.
+   * Determines **Unique Email**: `Yes` if the email domain is not a generic provider (Gmail, Yahoo, Outlook, etc.), else `No`.
+4. **isD2C Evaluation:**
+   * `isD2C = "Yes"` if **Unique Email == "Yes"**, otherwise `"No"`.
+5. **CSV Persistence:**
+   * Combines all data into a single row per seller.
    * Confirms write to CSV $\to$ marks customer as completed in `output/progress.json`.
 
 ---
@@ -194,11 +185,10 @@ For each Customer ID:
 ## 8. CSV Output Format
 Saved at: `output/scraped_data.csv` (encoded as `utf-8-sig` for immediate opening in Excel).
 
-| Sr No | Customer ID | Account Name | Support Manager | Seller Tier | Signed Up Date | Live Date | Brand List (Title) | Listing Brand | Is Brand | Brand Name | Mobile Number | Registered Mobile Number | Email ID | Registered Email ID |
+| Sr No | Customer ID | Account Name | Account Status | Support Manager | Seller Tier | Signed Up Date | Live Date | Approved Brand | Actual Brand Count | Mobile Number | Registered Mobile Number | Email ID | Registered Email ID | isD2C |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | ID001 | Seller ABC | No | Silver | 2021-01-10 | 2021-02-15 | Product Title 1 | BRAND_X | Possibly a Brand | BRAND_X | 9876543210 | 9876543210 | abc@mail.com | abc@mail.com |
-| | ID001 | Seller ABC | No | Silver | 2021-01-10 | 2021-02-15 | Product Title 2 | BRAND_X | Possibly a Brand | BRAND_X | 9876543210 | 9876543210 | abc@mail.com | abc@mail.com |
-| 2 | ID002 | Seller XYZ | Yes | Gold | 2020-05-12 | 2020-06-01 | | | | | | | | |
+| 1 | ID001 | Seller ABC | ACTIVE | No | Silver | 2021-01-10 | 2021-02-15 | 26 | 25 | 9876543210 | 9876543210 | abc@brandabc.com | abc@brandabc.com | Yes |
+| 2 | ID002 | Seller XYZ | ACTIVE | Yes | Gold | 2020-05-12 | 2020-06-01 | 0 | 0 | 9123456780 | 9123456780 | seller@gmail.com | seller@gmail.com | No |
 
 ---
 

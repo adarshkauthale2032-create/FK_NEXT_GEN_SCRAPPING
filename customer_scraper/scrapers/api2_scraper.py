@@ -2,9 +2,7 @@
 API #2 Scraper: Brand Approval Store Requests & Unique Brand Analysis.
 
 Fetches approval request metrics via requestsV2-count, retrieves all approval request
-records via requestsV2 with full pagination, computes unique case-insensitive brand counts,
-and queries QnA Store (questionsV2) per unique brand request to extract Brand Owner,
-Document Type (BAL/TM), and Brand Website Link.
+records via requestsV2 with full pagination, and computes unique case-insensitive brand counts.
 """
 
 import json
@@ -13,14 +11,14 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from api.api_client import APIClient, NetworkConnectionError
 from auth.auth_manager import AuthExpiredError
-from config.settings import API2_COUNT_ENDPOINT, API2_REQUESTS_ENDPOINT, API_QUESTIONS_ENDPOINT
+from config.settings import API2_COUNT_ENDPOINT, API2_REQUESTS_ENDPOINT
 
 logger = logging.getLogger("customer_scraper")
 
 
 class API2Scraper:
     """
-    Scraper module for API #2 (Approval Store requestsV2-count, requestsV2 & questionsV2).
+    Scraper module for API #2 (Approval Store requestsV2-count & requestsV2).
     """
 
     def __init__(self, api_client: APIClient):
@@ -70,94 +68,6 @@ class API2Scraper:
         all_cnt = counts.get("ALL", 0)
         logger.info("API #2 (requestsV2-count) for %s -> APPROVED: %d, ALL: %d", customer_id, approved, all_cnt)
         return counts
-
-    def get_question_answers(self, customer_id: str, request_id: str) -> Dict[str, str]:
-        """
-        Calls questionsV2 API against a specific request ID (processId) to extract:
-        - Brand Owner ('Are you the brand owner')
-        - Document Type ('Select the document type')
-        - Brand Website Link ('Brand Website Link')
-
-        Endpoint: /sellerDashboard/napi/qnaStore/questionsV2?processId={request_id}&sellerId={customer_id}
-        """
-        clean_req_id = str(request_id).strip()
-        if not clean_req_id or clean_req_id.lower() in ("null", "none", "0"):
-            return {"brand_owner": "", "document_type": "", "brand_website_link": ""}
-
-        endpoint = API_QUESTIONS_ENDPOINT.format(request_id=clean_req_id, customer_id=customer_id)
-        headers = {
-            "Accept": "*/*",
-            "Origin": "https://suv-flipkart.seller-support.fkcloud.it",
-            "Referer": f"https://suv-flipkart.seller-support.fkcloud.it/sellerDashboard/index.html?sellerId={customer_id}#dashboard/listings/trackApprovalRequestsV2?requestState=APPROVED",
-            "x-internal-env-type": "WEB",
-            "x-requested-with": "XMLHttpRequest",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-origin",
-        }
-
-        try:
-            response_data = self.api_client.get(endpoint, headers=headers)
-        except (AuthExpiredError, NetworkConnectionError):
-            raise
-        except Exception as e:
-            logger.warning(
-                "QnA API error for customer %s, processId %s: %s",
-                customer_id,
-                clean_req_id,
-                str(e),
-            )
-            return {"brand_owner": "", "document_type": "", "brand_website_link": ""}
-
-        qna_map: Dict[str, str] = {}
-
-        def _traverse(node: Any) -> None:
-            if isinstance(node, dict):
-                if "question" in node and isinstance(node["question"], dict):
-                    q_obj = node["question"]
-                    q_text = str(q_obj.get("text") or "").strip()
-                    ans_obj = node.get("answer")
-                    ans_text = ""
-                    if isinstance(ans_obj, dict):
-                        ans_text = str(ans_obj.get("answer_text") or "").strip()
-                    elif ans_obj is not None:
-                        ans_text = str(ans_obj).strip()
-                    if q_text and ans_text and ans_text.lower() not in ("null", "none"):
-                        qna_map[q_text] = ans_text
-                for val in node.values():
-                    _traverse(val)
-            elif isinstance(node, list):
-                for item in node:
-                    _traverse(item)
-
-        _traverse(response_data)
-
-        brand_owner = ""
-        document_type = ""
-        brand_website_link = ""
-
-        for q_text, ans_val in qna_map.items():
-            norm_q = q_text.lower().replace("?", "").replace(":", "").strip()
-            if "are you the brand owner" in norm_q and not brand_owner:
-                brand_owner = ans_val
-            elif "select the document type" in norm_q and not document_type:
-                document_type = ans_val
-            elif "brand website link" in norm_q and not brand_website_link:
-                brand_website_link = ans_val
-
-        logger.info(
-            "QnA API parsed for Request ID %s -> Brand Owner: %s, Document Type: %s, Website Link: %s",
-            clean_req_id,
-            brand_owner or "N/A",
-            document_type or "N/A",
-            brand_website_link or "N/A",
-        )
-
-        return {
-            "brand_owner": brand_owner,
-            "document_type": document_type,
-            "brand_website_link": brand_website_link,
-        }
 
     def get_approved_brands(
         self, customer_id: str, approved_count: int = 0
@@ -331,15 +241,7 @@ class API2Scraper:
         """
         Main entry point for API #2:
         1. Gets counts via requestsV2-count (extracts APPROVED count).
-        2. Gets unique case-insensitive brands, vertical names, and request IDs via requestsV2.
-        3. Calls QnA API (questionsV2) for all unique brands to extract:
-           - Request ID
-           - Brand Name
-           - Vertical Name (all associated verticals for the brand joined with comma)
-           - Brand Owner
-           - Document Type
-           - Brand Website Link
-        4. Computes brand_is_d2c (True if ANY brand has BAL/TM or valid website link).
+        2. Gets unique case-insensitive brands and request IDs via requestsV2.
 
         Returns:
             Dict containing:
@@ -347,14 +249,6 @@ class API2Scraper:
                 approved_brand: int
                 actual_brand_count: int
                 unique_brands: List[str]
-                brands_details: List[Dict[str, str]]
-                request_id: str
-                brand_name: str
-                vertical_name: str
-                brand_owner: str
-                document_type: str
-                brand_website_link: str
-                brand_is_d2c: bool
         """
         # Reset instance variables explicitly per seller call
         self._last_brand_display_names = {}
@@ -371,15 +265,6 @@ class API2Scraper:
                 "approved_brand": 0,
                 "actual_brand_count": 0,
                 "unique_brands": [],
-                "brands_details": [],
-                "request_id": "",
-                "brand_name": "",
-                "vertical_name": "",
-                "vertical": "",
-                "brand_owner": "",
-                "document_type": "",
-                "brand_website_link": "",
-                "brand_is_d2c": False,
             }
 
         actual_brand_count, brand_requests_map = self.get_approved_brands(
@@ -387,123 +272,14 @@ class API2Scraper:
             approved_count=approved_count,
         )
 
-        brand_display_names = getattr(self, "_last_brand_display_names", {})
-        brand_to_verticals_map = getattr(self, "_last_brand_to_verticals_map", {})
-        req_to_brand_map = getattr(self, "_last_req_to_brand_map", {})
-        req_to_vertical_map = getattr(self, "_last_req_to_vertical_map", {})
-
-        brands_details: List[Dict[str, str]] = []
-        brand_is_d2c = False
-
-        # Iterate sequentially over ALL unique brands and query QnA per unique brand
-        for brand_key, req_ids in brand_requests_map.items():
-            current_brand_display = brand_display_names.get(brand_key, brand_key)
-            all_verticals = brand_to_verticals_map.get(brand_key, [])
-            joined_verticals = ", ".join(all_verticals) if all_verticals else ""
-            brand_entry: Optional[Dict[str, str]] = None
-
-            for req_id in req_ids:
-                if not req_id:
-                    continue
-
-                qna_res = self.get_question_answers(customer_id, req_id)
-                doc_type = qna_res.get("document_type", "").strip()
-                web_link = qna_res.get("brand_website_link", "").strip()
-                b_owner = qna_res.get("brand_owner", "").strip()
-                b_name = req_to_brand_map.get(req_id, current_brand_display)
-                v_name = joined_verticals or req_to_vertical_map.get(req_id, "")
-
-                # Check D2C eligibility conditions from Brand verification
-                is_doc_match = doc_type.upper() in ("BAL", "TM")
-                is_link_match = bool(
-                    web_link
-                    and web_link.lower() not in ("null", "none", "n/a", "na", "")
-                    and ("." in web_link or "http" in web_link.lower())
-                )
-
-                if is_doc_match or is_link_match:
-                    brand_is_d2c = True
-                    logger.info(
-                        "🎯 [D2C BRAND MATCH] Seller %s: Request ID %s (Brand: '%s', Vertical: '%s') qualified for D2C (DocType: '%s', Website: '%s').",
-                        customer_id,
-                        req_id,
-                        b_name,
-                        v_name,
-                        doc_type,
-                        web_link,
-                    )
-
-                curr_entry = {
-                    "request_id": req_id,
-                    "brand_name": b_name,
-                    "vertical_name": v_name,
-                    "brand_owner": b_owner,
-                    "document_type": doc_type,
-                    "brand_website_link": web_link,
-                }
-
-                if brand_entry is None:
-                    brand_entry = curr_entry
-                elif is_doc_match or is_link_match:
-                    brand_entry = curr_entry
-                    break
-
-                if doc_type or b_owner or web_link:
-                    break
-
-            if brand_entry is None:
-                brand_entry = {
-                    "request_id": "",
-                    "brand_name": current_brand_display,
-                    "vertical_name": joined_verticals,
-                    "brand_owner": "",
-                    "document_type": "",
-                    "brand_website_link": "",
-                }
-
-            brands_details.append(brand_entry)
-
-        # Select baseline / primary details from the first brand
-        if brands_details:
-            selected_request_id = brands_details[0].get("request_id", "")
-            selected_brand_name = brands_details[0].get("brand_name", "")
-            selected_vertical_name = brands_details[0].get("vertical_name", "")
-            selected_brand_owner = brands_details[0].get("brand_owner", "")
-            selected_document_type = brands_details[0].get("document_type", "")
-            selected_brand_website_link = brands_details[0].get("brand_website_link", "")
-        else:
-            selected_request_id = ""
-            selected_brand_name = ""
-            selected_vertical_name = ""
-            selected_brand_owner = ""
-            selected_document_type = ""
-            selected_brand_website_link = ""
-
-        # Strict isolation: if no approved brands or empty map, brand_name and vertical_name MUST be blank
-        if approved_count <= 0 or not brand_requests_map:
-            selected_brand_name = ""
-            selected_vertical_name = ""
-            brands_details = []
-
         return {
             "customer_id": str(customer_id).strip(),
             "approved_brand": approved_count,
             "actual_brand_count": actual_brand_count,
             "unique_brands": sorted(list(brand_requests_map.keys())),
-            "brands_details": brands_details,
-            "request_id": selected_request_id,
-            "brand_name": selected_brand_name,
-            "vertical_name": selected_vertical_name,
-            "vertical": selected_vertical_name,
-            "brand_owner": selected_brand_owner,
-            "document_type": selected_document_type,
-            "brand_website_link": selected_brand_website_link,
-            "brand_is_d2c": brand_is_d2c,
         }
 
     # Backward compatibility alias
     def get_listings_and_brand(self, customer_id: str) -> Dict[str, Any]:
         """Alias for get_brand_approval_details."""
         return self.get_brand_approval_details(customer_id)
-
-

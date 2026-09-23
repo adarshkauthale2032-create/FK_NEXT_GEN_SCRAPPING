@@ -24,7 +24,8 @@ class TestCSVWriter(unittest.TestCase):
         self.writer = CSVWriter(
             csv_path=self.csv_path,
             excel_path=self.excel_path,
-            pending_path=self.pending_path
+            pending_path=self.pending_path,
+            output_dir=self.test_dir,
         )
 
     def tearDown(self):
@@ -36,6 +37,7 @@ class TestCSVWriter(unittest.TestCase):
             reader = csv.reader(f)
             headers = next(reader)
             self.assertEqual(headers, CSV_COLUMNS)
+            self.assertEqual(len(headers), 15)
 
     def test_append_support_manager_yes_customer(self):
         cust_data = {
@@ -56,17 +58,18 @@ class TestCSVWriter(unittest.TestCase):
 
         self.assertEqual(len(rows), 2)  # Header + 1 data row
         row_vals = rows[1]
+        self.assertEqual(len(row_vals), 15)
         self.assertEqual(row_vals[0], "1")  # Sr No
         self.assertEqual(row_vals[1], "CUST_001")
         self.assertEqual(row_vals[2], "Acme Corp")
         self.assertEqual(row_vals[3], "ACTIVE")  # Account Status
         self.assertEqual(row_vals[4], "Yes")  # Support Manager
         self.assertEqual(row_vals[5], "Gold")  # Seller Tier
-        self.assertEqual(row_vals[6], "")      # Address
-        self.assertEqual(row_vals[7], "2021-01-01")
-        self.assertEqual(row_vals[8], "2021-01-15")
+        self.assertEqual(row_vals[6], "2021-01-01")  # Signed Up Date
+        self.assertEqual(row_vals[7], "2021-01-15")  # Live Date
+        self.assertEqual(row_vals[14], "No")  # isD2C (no email provided)
 
-    def test_append_customer_support_manager_no_with_brands(self):
+    def test_append_customer_support_manager_no(self):
         cust_data = {
             "customer_id": "CUST_002",
             "account_name": "Retailer Plus",
@@ -75,19 +78,12 @@ class TestCSVWriter(unittest.TestCase):
             "actual_brand_count": 15,
             "support_manager": "No",
             "seller_tier": "Silver",
-            "address": "123 Market Road, Bangalore",
             "signed_up_date": "2022-03-10",
             "live_date": "2022-03-20",
-            "vertical_name": "Footwear",
             "mobile_number": "9876543210",
             "registered_mobile_number": "9876543211",
             "email_id": "contact@retail.com",
             "registered_email_id": "reg@retail.com",
-            "month": "June 2026 | July 2026 | August 2026",
-            "gross_amount": "₹915 | ₹1,603 | ₹6,313",
-            "gross_units": "1 | 1 | 4",
-            "net_amount": "₹0 | ₹1,603 | ₹3,082",
-            "cancelled_amount": "₹915 | ₹0 | ₹4,692",
         }
 
         success = self.writer.append_customer(cust_data, sr_no=2)
@@ -98,38 +94,22 @@ class TestCSVWriter(unittest.TestCase):
 
         self.assertEqual(len(rows), 2)  # Header + 1 data row
         row_vals = rows[1]
-        self.assertEqual(len(row_vals), 31)
+        self.assertEqual(len(row_vals), 15)
         self.assertEqual(row_vals[0], "2")  # Sr No
         self.assertEqual(row_vals[1], "CUST_002")
         self.assertEqual(row_vals[2], "Retailer Plus")
         self.assertEqual(row_vals[3], "ACTIVE")
         self.assertEqual(row_vals[4], "No")
         self.assertEqual(row_vals[5], "Silver")
-        self.assertEqual(row_vals[6], "123 Market Road, Bangalore")  # Address
-        self.assertEqual(row_vals[7], "2022-03-10")
-        self.assertEqual(row_vals[8], "2022-03-20")
-        self.assertEqual(row_vals[9], "26")
-        self.assertEqual(row_vals[10], "15")
-        self.assertEqual(row_vals[11], "")            # Request ID
-        self.assertEqual(row_vals[12], "")            # Brand Name
-        self.assertEqual(row_vals[13], "Footwear")    # Vertical Name
-        self.assertEqual(row_vals[14], "")            # Brand Owner
-        self.assertEqual(row_vals[15], "")            # Document Type
-        self.assertEqual(row_vals[16], "")            # Listing Count
-        self.assertEqual(row_vals[17], "")            # Brand Website Link
-        self.assertEqual(row_vals[18], "")            # Instagram URL
-        self.assertEqual(row_vals[19], "")            # Instagram Followers
-        self.assertEqual(row_vals[20], "9876543210")  # Mobile Number
-        self.assertEqual(row_vals[21], "9876543211")  # Registered Mobile Number
-        self.assertEqual(row_vals[22], "contact@retail.com")
-        self.assertEqual(row_vals[23], "reg@retail.com")
-        self.assertEqual(row_vals[24], "Yes")         # Unique Email
-        self.assertEqual(row_vals[25], "Yes")         # retail.com is custom domain -> isD2C = Yes
-        self.assertEqual(row_vals[26], "June 2026 | July 2026 | August 2026")  # Month
-        self.assertEqual(row_vals[27], "₹915 | ₹1,603 | ₹6,313")               # Gross Amount (GMV)
-        self.assertEqual(row_vals[28], "1 | 1 | 4")                            # Gross Units
-        self.assertEqual(row_vals[29], "₹0 | ₹1,603 | ₹3,082")                 # Net Amount
-        self.assertEqual(row_vals[30], "₹915 | ₹0 | ₹4,692")                   # Cancelled Amount
+        self.assertEqual(row_vals[6], "2022-03-10")
+        self.assertEqual(row_vals[7], "2022-03-20")
+        self.assertEqual(row_vals[8], "26")
+        self.assertEqual(row_vals[9], "15")
+        self.assertEqual(row_vals[10], "9876543210")  # Mobile Number
+        self.assertEqual(row_vals[11], "9876543211")  # Registered Mobile Number
+        self.assertEqual(row_vals[12], "contact@retail.com")
+        self.assertEqual(row_vals[13], "reg@retail.com")
+        self.assertEqual(row_vals[14], "Yes")  # retail.com is custom domain -> isD2C = Yes
 
     def test_get_completed_customer_ids(self):
         cust1 = {"customer_id": "ID_AAA", "support_manager": "Yes"}
@@ -177,13 +157,7 @@ class TestCSVWriter(unittest.TestCase):
         self.assertEqual(completed, {"C1", "C2", "C3"})
         self.assertEqual(chunk_writer.get_current_customer_count(), 3)
 
-    def test_append_customer_multi_brand_sequential_sr_no(self):
-        """
-        Tests that when Seller 1 has 3 brands and Seller 2 has 1 brand:
-        - 3 rows are written for Seller 1 (1st row full, next 2 rows empty except 5 brand columns).
-        - 4th data row starts Seller 2 with Sr No 2.
-        - get_completed_customer_ids returns 2 unique IDs without double counting.
-        """
+    def test_append_customer_sequential_sr_no(self):
         seller1 = {
             "customer_id": "SELLER_1",
             "account_name": "Multi Brand Seller",
@@ -191,29 +165,6 @@ class TestCSVWriter(unittest.TestCase):
             "support_manager": "No",
             "seller_tier": "Gold",
             "actual_brand_count": 3,
-            "brands_details": [
-                {
-                    "request_id": "REQ_001",
-                    "brand_name": "Brand Alpha",
-                    "vertical_name": "Footwear",
-                    "brand_owner": "Yes",
-                    "document_type": "TM",
-                },
-                {
-                    "request_id": "REQ_002",
-                    "brand_name": "Brand Beta",
-                    "vertical_name": "Apparel",
-                    "brand_owner": "No",
-                    "document_type": "BAL",
-                },
-                {
-                    "request_id": "REQ_003",
-                    "brand_name": "Brand Gamma",
-                    "vertical_name": "Accessories",
-                    "brand_owner": "No",
-                    "document_type": "OTHER",
-                },
-            ],
             "email_id": "contact@alpha.com",
             "isD2C": "Yes",
         }
@@ -225,11 +176,6 @@ class TestCSVWriter(unittest.TestCase):
             "support_manager": "Yes",
             "seller_tier": "Silver",
             "actual_brand_count": 1,
-            "request_id": "REQ_004",
-            "brand_name": "Brand Delta",
-            "vertical_name": "Home",
-            "brand_owner": "Yes",
-            "document_type": "TM",
             "email_id": "info@delta.com",
             "isD2C": "Yes",
         }
@@ -240,53 +186,23 @@ class TestCSVWriter(unittest.TestCase):
         with open(self.csv_path, "r", encoding="utf-8-sig") as f:
             rows = list(csv.reader(f))
 
-        # Total rows = 1 header + 3 for Seller 1 + 1 for Seller 2 = 5 rows
-        self.assertEqual(len(rows), 5)
+        # Total rows = 1 header + 1 for Seller 1 + 1 for Seller 2 = 3 rows
+        self.assertEqual(len(rows), 3)
 
         # Header
         self.assertEqual(rows[0], CSV_COLUMNS)
 
-        # Row 1: Seller 1, Brand Alpha (full row)
+        # Row 1: Seller 1
         self.assertEqual(rows[1][0], "1")
         self.assertEqual(rows[1][1], "SELLER_1")
         self.assertEqual(rows[1][2], "Multi Brand Seller")
-        self.assertEqual(rows[1][10], "3")
-        self.assertEqual(rows[1][11], "REQ_001")
-        self.assertEqual(rows[1][12], "Brand Alpha")
-        self.assertEqual(rows[1][13], "Footwear")
-        self.assertEqual(rows[1][14], "Yes")
-        self.assertEqual(rows[1][15], "TM")
+        self.assertEqual(rows[1][9], "3")
 
-        # Row 2: Seller 1, Brand Beta (only 5 columns filled)
-        self.assertEqual(rows[2][0], "")
-        self.assertEqual(rows[2][1], "")
-        self.assertEqual(rows[2][2], "")
-        self.assertEqual(rows[2][11], "REQ_002")
-        self.assertEqual(rows[2][12], "Brand Beta")
-        self.assertEqual(rows[2][13], "Apparel")
-        self.assertEqual(rows[2][14], "No")
-        self.assertEqual(rows[2][15], "BAL")
-        self.assertEqual(rows[2][21], "")
-
-        # Row 3: Seller 1, Brand Gamma (only 5 columns filled)
-        self.assertEqual(rows[3][0], "")
-        self.assertEqual(rows[3][1], "")
-        self.assertEqual(rows[3][11], "REQ_003")
-        self.assertEqual(rows[3][12], "Brand Gamma")
-        self.assertEqual(rows[3][13], "Accessories")
-        self.assertEqual(rows[3][14], "No")
-        self.assertEqual(rows[3][15], "OTHER")
-
-        # Row 4: Seller 2, starts with Sr No 2 (full row)
-        self.assertEqual(rows[4][0], "2")
-        self.assertEqual(rows[4][1], "SELLER_2")
-        self.assertEqual(rows[4][2], "Single Brand Seller")
-        self.assertEqual(rows[4][10], "1")
-        self.assertEqual(rows[4][11], "REQ_004")
-        self.assertEqual(rows[4][12], "Brand Delta")
-        self.assertEqual(rows[4][13], "Home")
-        self.assertEqual(rows[4][14], "Yes")
-        self.assertEqual(rows[4][15], "TM")
+        # Row 2: Seller 2, Sr No 2
+        self.assertEqual(rows[2][0], "2")
+        self.assertEqual(rows[2][1], "SELLER_2")
+        self.assertEqual(rows[2][2], "Single Brand Seller")
+        self.assertEqual(rows[2][9], "1")
 
         # Verify completed customer IDs and count
         completed = self.writer.get_completed_customer_ids()
@@ -297,7 +213,7 @@ class TestCSVWriter(unittest.TestCase):
     def test_corrupted_workbook_auto_recovery(self):
         # Deliberately corrupt the excel file with garbage bytes
         self.excel_path.write_bytes(b"CORRUPTED_GARBAGE_BYTES_NOT_ZIP")
-        
+
         # Next append should detect corruption, backup corrupt file, reinitialize fresh and succeed
         cust = {"customer_id": "RECOVERED_ID", "account_name": "Recovered", "support_manager": "Yes"}
         success = self.writer.append_customer(cust, sr_no=1)
@@ -312,5 +228,3 @@ class TestCSVWriter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

@@ -65,8 +65,8 @@ class CSVWriter:
     def verify_and_migrate_all_datasets(self) -> None:
         """
         Scans all existing CSV and Excel files in the output directory, verifies if all
-        configured CSV_COLUMNS (including 'Instagram Followers') are present in correct order,
-        and automatically upgrades any legacy or missing columns without modifying existing data.
+        configured CSV_COLUMNS are present in correct order, and automatically upgrades
+        any legacy or missing columns without modifying existing data.
         """
         if not self.output_dir.exists():
             return
@@ -132,7 +132,7 @@ class CSVWriter:
                 logger.error("Failed to initialize CSV file (%s): %s", file_path, str(e))
             return
 
-        # Check if existing CSV has outdated columns (e.g. missing Brand Name, Instagram URL, or Instagram Followers)
+        # Check if existing CSV has outdated columns from a prior schema version
         try:
             with open(file_path, "r", newline="", encoding="utf-8-sig") as f:
                 reader = list(csv.reader(f))
@@ -221,13 +221,10 @@ class CSVWriter:
                     cell.alignment = header_align
                     cell.border = thin_border
 
-                # Set column widths (31 columns)
+                # Set column widths (15 columns)
                 col_widths = {
-                    1: 8, 2: 20, 3: 25, 4: 18, 5: 16, 6: 14, 7: 35, 8: 15, 9: 15,
-                    10: 16, 11: 18, 12: 18, 13: 22, 14: 25, 15: 16, 16: 16,
-                    17: 18, 18: 32, 19: 35, 20: 20, 21: 18,
-                    22: 24, 23: 25, 24: 28, 25: 14, 26: 12, 27: 30, 28: 25,
-                    29: 15, 30: 25, 31: 25,
+                    1: 8, 2: 20, 3: 25, 4: 18, 5: 16, 6: 14, 7: 15, 8: 15,
+                    9: 16, 10: 18, 11: 18, 12: 24, 13: 25, 14: 28, 15: 12,
                 }
                 for c_idx, width in col_widths.items():
                     col_letter = openpyxl.utils.get_column_letter(c_idx)
@@ -304,7 +301,7 @@ class CSVWriter:
                 cell.alignment = header_align
                 cell.border = thin_border
 
-            # Set column widths (31 columns)
+            # Set column widths (15 columns)
             col_widths = {
                 1: 8,   # Sr No
                 2: 20,  # Customer ID
@@ -312,31 +309,15 @@ class CSVWriter:
                 4: 18,  # Account Status
                 5: 16,  # Support Manager
                 6: 14,  # Seller Tier
-                7: 35,  # Address
-                8: 15,  # Signed Up Date
-                9: 15,  # Live Date
-                10: 16, # Approved Brand
-                11: 18, # Actual Brand Count
-                12: 18, # Request ID
-                13: 22, # Brand Name
-                14: 25, # Vertical Name
-                15: 16, # Brand Owner
-                16: 16, # Document Type
-                17: 18, # Listing Count
-                18: 32, # Brand Website Link
-                19: 35, # Instagram URL
-                20: 20, # Instagram Followers
-                21: 18, # Mobile Number
-                22: 24, # Registered Mobile Number
-                23: 25, # Email ID
-                24: 28, # Registered Email ID
-                25: 14, # Unique Email
-                26: 12, # isD2C
-                27: 30, # Month
-                28: 25, # Gross Amount (GMV)
-                29: 15, # Gross Units
-                30: 25, # Net Amount
-                31: 25, # Cancelled Amount
+                7: 15,  # Signed Up Date
+                8: 15,  # Live Date
+                9: 16,  # Approved Brand
+                10: 18, # Actual Brand Count
+                11: 18, # Mobile Number
+                12: 24, # Registered Mobile Number
+                13: 25, # Email ID
+                14: 28, # Registered Email ID
+                15: 12, # isD2C
             }
             for col_idx, width in col_widths.items():
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
@@ -542,24 +523,11 @@ class CSVWriter:
         account_status = data.get("account_status", "")
         support_manager = data.get("support_manager", "")
         seller_tier = data.get("seller_tier", "")
-        address = data.get("address")
-        if not address:
-            line1 = str(data.get("pickupAddressLine1") or "").strip()
-            line2 = str(data.get("pickupAddressLine2") or "").strip()
-            address = " ".join([p for p in (line1, line2) if p and p.lower() not in ("null", "none")])
 
         signed_up_date = self._clean_date_str(data.get("signed_up_date", ""))
         live_date = self._clean_date_str(data.get("live_date", ""))
         approved_brand = data.get("approved_brand", "")
         actual_brand_count = data.get("actual_brand_count", "")
-        request_id = data.get("request_id", "")
-        brand_name = data.get("brand_name") or data.get("brand") or data.get("brandName") or ""
-        vertical_name = data.get("vertical_name") or data.get("vertical") or data.get("verticalName") or ""
-        brand_owner = data.get("brand_owner", "")
-        document_type = data.get("document_type", "")
-        brand_website_link = data.get("brand_website_link", "")
-        instagram_url = data.get("instagram_url") or data.get("instagram") or ""
-        instagram_followers = data.get("instagram_followers") or data.get("insta_followers") or ""
         mobile_number = data.get("mobile_number", "")
         registered_mobile = data.get("registered_mobile_number", "")
         email_id = data.get("email_id", "")
@@ -578,49 +546,10 @@ class CSVWriter:
                             unique_email = "Yes"
                             break
 
-        # Determine isD2C ('Yes' or 'No') based on 4 criteria:
-        # 1. Unique Email == 'Yes'
-        # 2. Document Type is BAL or TM
-        # 3. Valid Brand Website Link
-        # 4. Instagram Profile Found
+        # Determine isD2C ('Yes' or 'No'): Unique Email == 'Yes' is the sole signal.
         is_d2c = data.get("isD2C") or data.get("is_d2c")
         if not is_d2c:
-            doc_type_clean = str(document_type).strip().upper()
-            web_link_clean = str(brand_website_link).strip()
-            is_valid_link = bool(
-                web_link_clean
-                and web_link_clean.lower() not in ("null", "none", "n/a", "na", "")
-                and ("." in web_link_clean or "http" in web_link_clean.lower())
-            )
-            is_insta_found = bool(
-                instagram_url
-                and str(instagram_url).strip().lower() not in ("null", "none", "n/a", "na", "")
-            )
-            if unique_email == "Yes" or doc_type_clean in ("BAL", "TM") or is_valid_link or is_insta_found:
-                is_d2c = "Yes"
-            else:
-                is_d2c = "No"
-
-        # GMV Metrics (API #4)
-        month = data.get("month", "")
-        gross_amount = data.get("gross_amount", "") or data.get("gross_amount_gmv", "")
-        gross_units = data.get("gross_units", "")
-        net_amount = data.get("net_amount", "")
-        cancelled_amount = data.get("cancelled_amount", "")
-
-        listing_count = data.get("listing_count", "") or data.get("active_listings", "")
-
-        brands_details = data.get("brands_details") or []
-        if brands_details and isinstance(brands_details, list) and len(brands_details) > 0:
-            first_brand = brands_details[0]
-            if isinstance(first_brand, dict):
-                request_id = first_brand.get("request_id") or request_id
-                brand_name = first_brand.get("brand_name") or brand_name
-                vertical_name = first_brand.get("vertical_name") or vertical_name
-                brand_owner = first_brand.get("brand_owner") or brand_owner
-                document_type = first_brand.get("document_type") or document_type
-                listing_count = first_brand.get("listing_count") or first_brand.get("active_listings") or listing_count
-                brand_website_link = first_brand.get("brand_website_link") or brand_website_link
+            is_d2c = "Yes" if unique_email == "Yes" else "No"
 
         main_row = [
             sr_no,
@@ -629,76 +558,18 @@ class CSVWriter:
             account_status,
             support_manager,
             seller_tier,
-            address,
             signed_up_date,
             live_date,
             approved_brand,
             actual_brand_count,
-            request_id,
-            brand_name,
-            vertical_name,
-            brand_owner,
-            document_type,
-            listing_count,
-            brand_website_link,
-            instagram_url,
-            instagram_followers,
             mobile_number,
             registered_mobile,
             email_id,
             registered_email,
-            unique_email,
             is_d2c,
-            month,
-            gross_amount,
-            gross_units,
-            net_amount,
-            cancelled_amount,
         ]
 
-        rows = [main_row]
-
-        # For additional brands (Brand #2, Brand #3, ...), add rows with only the brand columns populated
-        if brands_details and isinstance(brands_details, list) and len(brands_details) > 1:
-            for b_item in brands_details[1:]:
-                if not isinstance(b_item, dict):
-                    continue
-                sub_row = [
-                    "",  # 0: Sr No
-                    "",  # 1: Customer ID
-                    "",  # 2: Account Name
-                    "",  # 3: Account Status
-                    "",  # 4: Support Manager
-                    "",  # 5: Seller Tier
-                    "",  # 6: Address
-                    "",  # 7: Signed Up Date
-                    "",  # 8: Live Date
-                    "",  # 9: Approved Brand
-                    "",  # 10: Actual Brand Count
-                    b_item.get("request_id", ""),               # 11: Request ID
-                    b_item.get("brand_name", ""),               # 12: Brand Name
-                    b_item.get("vertical_name", ""),            # 13: Vertical Name
-                    b_item.get("brand_owner", ""),              # 14: Brand Owner
-                    b_item.get("document_type", ""),            # 15: Document Type
-                    b_item.get("listing_count", "") or b_item.get("active_listings", ""), # 16: Listing Count
-                    "",  # 17: Brand Website Link
-                    "",  # 18: Instagram URL
-                    "",  # 19: Instagram Followers
-                    "",  # 20: Mobile Number
-                    "",  # 21: Registered Mobile Number
-                    "",  # 22: Email ID
-                    "",  # 23: Registered Email ID
-                    "",  # 24: Unique Email
-                    "",  # 25: isD2C
-                    "",  # 26: Month
-                    "",  # 27: Gross Amount (GMV)
-                    "",  # 28: Gross Units
-                    "",  # 29: Net Amount
-                    "",  # 30: Cancelled Amount
-                ]
-                rows.append(sub_row)
-
-        return rows
+        return [main_row]
 
     def append_customer(self, customer_data: Dict[str, Any], sr_no: Any) -> bool:
         """

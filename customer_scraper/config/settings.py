@@ -69,11 +69,7 @@ API2_COUNT_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2-count?sel
 API2_REQUESTS_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2?sellerId={customer_id}"
 API2_ENDPOINT = API2_REQUESTS_ENDPOINT  # Compatibility alias
 API3_ENDPOINT = "/getSellerContacts?sellerId={customer_id}"
-API4_ENDPOINT = "/sellerDashboard/napi/graphql-sse?sellerId={customer_id}"
-API4_GRAPHQL_ENDPOINT = "/sellerDashboard/napi/graphql?sellerId={customer_id}"
-COPILOT_SESSION_ID = "8ad91b37-b143-4c75-9b0f-cddaed72a134"
 API_APPROVALS_ENDPOINT = "/sellerDashboard/napi/approval-store/requestsV2?sellerId={customer_id}"
-API_QUESTIONS_ENDPOINT = "/sellerDashboard/napi/qnaStore/questionsV2?processId={request_id}&sellerId={customer_id}"
 
 # Scraping & Business Rules
 CHUNK_SIZE = 10000  # Number of sellers per output CSV batch file (e.g. 1-10000, 10001-20000, etc.)
@@ -111,7 +107,7 @@ GENERIC_EMAIL_DOMAINS = {
     "gmx.com",
 }
 
-# CSV / Excel Column Definitions (Preserving strict order - 31 Columns)
+# CSV / Excel Column Definitions (Preserving strict order - 15 Columns)
 CSV_COLUMNS = [
     "Sr No",
     "Customer ID",
@@ -119,31 +115,15 @@ CSV_COLUMNS = [
     "Account Status",
     "Support Manager",
     "Seller Tier",
-    "Address",
     "Signed Up Date",
     "Live Date",
     "Approved Brand",
     "Actual Brand Count",
-    "Request ID",
-    "Brand Name",
-    "Vertical Name",
-    "Brand Owner",
-    "Document Type",
-    "Listing Count",
-    "Brand Website Link",
-    "Instagram URL",
-    "Instagram Followers",
     "Mobile Number",
     "Registered Mobile Number",
     "Email ID",
     "Registered Email ID",
-    "Unique Email",
     "isD2C",
-    "Month",
-    "Gross Amount (GMV)",
-    "Gross Units",
-    "Net Amount",
-    "Cancelled Amount",
 ]
 EXCEL_COLUMNS = CSV_COLUMNS  # Backward compatibility alias
 
